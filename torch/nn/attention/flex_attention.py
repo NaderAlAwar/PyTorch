@@ -194,10 +194,34 @@ def _adjust_num_blocks_and_indices(
     new_num_rows: int,
     new_num_cols: int,
 ):
+    """Given an existing num_blocks and indices, adjust the indices to the new number of rows and columns.
+    Take special care to recalculate the num_blocks by invalidating the indices that are out of bounds.
+
+    """
+    # Create a mask for valid blocks using arange
+    block_arange = torch.arange(indices.size(-1), device=indices.device)[
+        None, None, None, :
+    ]
+    num_blocks_expanded = num_blocks[..., None]  # [b, h, q//block_size, 1]
+    valid_blocks_mask = block_arange < num_blocks_expanded
+
+    # Get the blocks within the valid range
+    max_good_blocks = torch.where(
+        valid_blocks_mask, indices, torch.tensor(-1, device=indices.device)
+    )
+    new_valid_blocks = torch.where(
+        max_good_blocks < new_num_cols,
+        max_good_blocks,
+        torch.tensor(-1, device=indices.device),
+    )
+
+    # Count valid blocks per row
+    new_num_blocks = (new_valid_blocks != -1).sum(dim=-1, keepdim=False).to(torch.int32)
+
+    # Truncate indices to new dimensions
     indices = indices[:, :, :new_num_rows, :new_num_cols]
-    num_blocks = num_blocks[:, :, :new_num_rows]
-    num_blocks = torch.where(num_blocks < new_num_cols, num_blocks, new_num_cols)
-    num_blocks = torch.sum(indices < num_blocks[:, :, :, None], dim=-1).to(torch.int32)
+    num_blocks = new_num_blocks[:, :, :new_num_rows]
+
     return num_blocks, indices
 
 
@@ -559,8 +583,12 @@ class BlockMask:
         )
 
     def _adjust(self, new_q_len: int, new_kv_len: int):
-        new_num_rows = new_q_len // self.BLOCK_SIZE[0]
-        new_num_cols = new_kv_len // self.BLOCK_SIZE[1]
+        def ceil_div(a, b):
+            return (a + b - 1) // b
+
+        new_num_rows = ceil_div(new_q_len, self.BLOCK_SIZE[0])
+        new_num_cols = ceil_div(new_kv_len, self.BLOCK_SIZE[1])
+
         new_kv_num_blocks, new_kv_indices = _adjust_num_blocks_and_indices(
             self.kv_num_blocks, self.kv_indices, new_num_rows, new_num_cols
         )
@@ -585,6 +613,7 @@ class BlockMask:
             new_full_kv_indices,
             self.BLOCK_SIZE,
             self.mask_mod,
+            seq_lengths=(new_q_len, new_kv_len),
         )
 
     def numel(self):
@@ -597,8 +626,9 @@ class BlockMask:
         return _prod(shape)
 
     def sparsity(self) -> float:
-        """Computes the percentage of blocks that are sparse (i.e. not computed)"""
+        """Computes the percentage of blocks that are sparse (i.e. not computed), note that this counts partial blocks as full"""
         total_size = self.numel()
+        total_size = max(total_size, self.BLOCK_SIZE[0] * self.BLOCK_SIZE[1])
         computed_blocks = self.kv_num_blocks.sum()
         if self.full_kv_num_blocks is not None:
             computed_blocks += self.full_kv_num_blocks.sum()
