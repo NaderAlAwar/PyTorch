@@ -225,7 +225,7 @@ post_grad_fusion_options: Dict[str, Dict[str, Any]] = {}
 # enable reordering pass for improving memory locality
 reorder_for_locality = True
 
-# Scale down RBLOCK for better occupancy
+# Scale down Rn_BLOCK for better occupancy
 dynamic_scale_rblock = os.environ.get("TORCHINDUCTOR_DYNAMIC_SCALE_RBLOCK", "1") == "1"
 
 # this forces fusion for int_mm with mul. Needed when you want to avoid realizing the int32
@@ -950,7 +950,7 @@ class triton:
 
     # Prefer higher dimensional tilings. This simplifies indexing expressions, making
     # it easier to identify block pointers.
-    prefer_nd_tiling: bool = False
+    prefer_nd_tiling: bool = True
 
     # use triton.autotune for pointwise ops with complex layouts
     # this should only be disabled for debugging/testing
@@ -962,6 +962,10 @@ class triton:
     # Tune the generated Triton kernels at compile time instead of first time they run
     # Setting to None means uninitialized
     autotune_at_compile_time: Optional[bool] = None
+
+    # Allows tiling reductions into multiple dimensions.
+    # For best results, this should be used with prefer_nd_tiling.
+    tile_reductions: bool = True
 
     # should we stop a fusion to allow better tiling?
     tiling_prevents_pointwise_fusion = True
@@ -1004,7 +1008,7 @@ class triton:
     # hint to Triton when arguments are divisible by 16
     divisible_by_16 = True
 
-    # Minimum RBLOCK to be used for a TritonSplitScanKernel
+    # Minimum R0_BLOCK to be used for a TritonSplitScanKernel
     # NOTE: This also indirectly controls the size of workspace buffer required
     min_split_scan_rblock = 256
 
