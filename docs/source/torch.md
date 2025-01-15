@@ -317,6 +317,14 @@ False
 
 ## Math operations
 
+### Constants
+
+| Value  | Description |
+|--------|-------------|
+| `inf`  | A floating-point positive infinity. Alias for `math.inf`. |
+| `nan`  | A floating-point "not a number" value. This value is not a legal number. Alias for `math.nan`. |
+
+
 ### Pointwise Ops
 
 ```{eval-rst}
@@ -754,19 +762,17 @@ Forward-mode AD is not supported.
 
 ## Export Path
 
-```{eval-rst}
-.. autosummary::
-   :toctree: generated
-   :nosignatures:
-```
-
 ```{warning}
 This feature is a prototype and may have compatibility breaking changes in the future.
 ```
 
-```
-export
-generated/exportdb/index
+```{eval-rst}
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   export
+   generated/exportdb/index
 ```
 
 ## Control Flow
@@ -793,7 +799,7 @@ This feature is a prototype and may have compatibility breaking changes in the f
    compile
 ```
 
-[torch.compile documentation](https://pytorch.org/docs/main/torch.compiler.html)
+For more information, see the [torch.compile documentation](https://pytorch.org/docs/main/torch.compiler.html).
 
 ## Operator Tags
 
@@ -802,20 +808,17 @@ This feature is a prototype and may have compatibility breaking changes in the f
    :members:
 ```
 
-```{eval-rst}
-.. Empty submodules added only for tracking.
-.. py:module:: torch.contrib
-.. py:module:: torch.utils.backcompat
-```
+<!-- Empty submodules added only for tracking. 
+{py:module}`torch.contrib`
+{py:module}`torch.utils.backcompat`
+ -->
 
-<!-- This module is only used internally for ROCm builds. -->
-```{eval-rst}
-.. py:module:: torch.utils.hipify
-```
+<!-- This module is only used internally for ROCm builds.
+{py:module}`torch.utils.hipify` -->
+
 
 <!-- This module needs to be documented. Adding here in the meantime
-for tracking purposes -->
-```{eval-rst}
+for tracking purposes 
 .. py:module:: torch.utils.model_dump
 .. py:module:: torch.utils.viz
 .. py:module:: torch.functional
@@ -828,4 +831,4 @@ for tracking purposes -->
 .. py:module:: torch.torch_version
 .. py:module:: torch.types
 .. py:module:: torch.version
-```
+--->
