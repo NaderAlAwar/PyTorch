@@ -508,6 +508,20 @@ def _register_quantized_linear_unary_lowering(
     return qlinear
 
 
+def _reselect_binary_op(original_binary_op_name, other, computation_node):
+    # Change the post op from sum to binary add for the following two cases:
+    # 1. when outplace add is required.
+    # 2. broadcast add.
+    from .mkldnn_fusion import _can_be_inplace
+
+    if original_binary_op_name == "sum" and (
+        not _can_be_inplace(other)
+        or other.data.shape != list(computation_node.meta["val"].size())
+    ):
+        return "add"
+    return original_binary_op_name
+
+
 def _register_quantized_linear_binary_lowering(
     pattern,
     pass_number,
@@ -543,7 +557,6 @@ def _register_quantized_linear_binary_lowering(
         o_zero_point = kwargs["output_zero_point"]
 
         x2.realize()
-        from .mkldnn_fusion import _can_be_inplace
 
         binary_op_name = kwargs["binary_op_name"]
         alpha = kwargs["alpha"]
@@ -551,15 +564,8 @@ def _register_quantized_linear_binary_lowering(
         scalars_attr = kwargs["unary_op_args"]
         algorithm_attr = kwargs["unary_op_algorithm"]
 
-        if binary_op_name == "sum" and not _can_be_inplace(x2):
-            # When we enable the GEMM Template, the output of QLinear
-            # will be reshaped from 2D back to 3D if the input is 3D.
-            # This causes _can_be_inplace(x2) to return False if x2 happens
-            # to be the output of QLinear in this scenario.
-            # Change the post op from sum to binary add for this case.
-            # Refer to test case:
-            #   test_mkldnn_pattern_matcher.py::test_qlinear_dequant_promotion_cpu_input_dim_exceeds_2
-            binary_op_name = "add"
+        # Change the post op from sum to binary add when outplace add is required.
+        binary_op_name = _reselect_binary_op(binary_op_name, x2, match.nodes[0])
 
         computation_args = (
             x,
@@ -609,7 +615,7 @@ def _is_valid_quantized_op_binary_optimization_pattern(
     # * qop_pointwise should only has one users
     # * If extra_input_from_dequant is True, extra input of binary node should come from dequant pattern
     # * the two inputs of binary node should have attribute "meta" and should be tensors
-    # * the two inputs of binary node should have the same shape
+    # * the two inputs of binary node should have the same dimensions, and only supports extra_input for broadcasting
     # * All users of the extra input in this pattern should be
     #   ancestor nodes of the compute node, except for the binary node
     #   connected to the compute node.
@@ -647,18 +653,6 @@ def _is_valid_quantized_op_binary_optimization_pattern(
             and isinstance(binary_node_inputs[1].meta.get("val", None), torch.Tensor)  # type: ignore[union-attr]
         ):
             return False
-        # the two inputs of binary node should have the same shape
-        if (
-            binary_node_inputs[0].meta["val"].size()  # type: ignore[union-attr]
-            != binary_node_inputs[1].meta["val"].size()  # type: ignore[union-attr]
-        ):
-            return False
-
-        # All users of the extra input in this pattern should be
-        # ancestor nodes of the compute node, except for the binary node
-        # connected to the compute node.
-
-        from .mkldnn_fusion import _get_remaining_users
 
         extra_input_of_pattern = (
             match.kwargs["other"]
@@ -669,6 +663,48 @@ def _is_valid_quantized_op_binary_optimization_pattern(
                 else match.kwargs["accum_after_dequant"]
             )
         )
+
+        # Check if the tensor shape of the 'other' node is the same as or
+        # can be broadcasted to the tensor shape of the computation node.
+        compute_op = compute_node.target
+        compute_node_size = compute_node.meta.get("val", None).size()
+        if compute_op in [
+            torch.ops.onednn.qlinear_pointwise.default,
+            torch.ops.onednn.qlinear_pointwise.tensor,
+        ]:
+            broadcast_sizes = []
+            if len(compute_node_size) >= 2:
+                broadcast_sizes = [
+                    torch.Size(
+                        [1 for _ in range(len(compute_node_size) - 1)]
+                        + [compute_node_size[-1]]
+                    ),
+                ]
+        else:
+            assert compute_op is torch.ops.onednn.qconv2d_pointwise.default
+            broadcast_sizes = [
+                torch.Size(
+                    [compute_node_size[0], compute_node_size[1]]
+                    + [1 for _ in range(len(compute_node_size) - 2)]
+                ),
+                torch.Size(
+                    [1, compute_node_size[1]]
+                    + [1 for _ in range(len(compute_node_size) - 2)]
+                ),
+                torch.Size([1 for _ in range(len(compute_node_size))]),
+            ]
+        if (
+            extra_input_of_pattern.meta.get("val", None).size()
+            not in [compute_node_size] + broadcast_sizes
+        ):
+            return False
+
+        # All users of the extra input in this pattern should be
+        # ancestor nodes of the compute node, except for the binary node
+        # connected to the compute node.
+
+        from .mkldnn_fusion import _get_remaining_users
+
         if (
             len(_get_remaining_users(extra_input_of_pattern, compute_node)) > 1
             or extra_input_of_pattern == compute_node.args[0]
@@ -718,11 +754,10 @@ def _register_quantized_conv_binary_lowering(
         o_zero_point = kwargs["o_zp"] if output_dtype == torch.uint8 else 0
 
         accum.realize()
-        from .mkldnn_fusion import _can_be_inplace
 
-        assert _can_be_inplace(
-            accum
-        ), "QConv Binary Inplace Fusion requires accum is not an alias or mutation."
+        binary_op_name = _reselect_binary_op(
+            binary_unary_attr.binary_op_name, accum, match.nodes[0]
+        )
 
         computation_args = (
             x,
@@ -742,7 +777,7 @@ def _register_quantized_conv_binary_lowering(
             output_dtype,
             accum_scale,
             accum_zp,
-            binary_unary_attr.binary_op_name,
+            binary_op_name,
             binary_unary_attr.alpha,
             binary_unary_attr.unary_op_name,
             binary_unary_attr.scalars_attr,
@@ -896,6 +931,7 @@ def _register_quantization_binary_fusion():
             self.scalars_attr = scalars_attr if scalars_attr else []
             self.algorithm_attr = algorithm_attr if algorithm_attr else ""
 
+    # QConv
     for int8_mixed_bf16_with_inplace_add in [False, True]:
         # Priority 1 to match: QConv2d Binary or Binary-Unary pattern with int8 output
         swap_binary_inputs_list = [False, True]
@@ -2955,6 +2991,12 @@ def _register_qlinear_post_op_fusion_pass(
                 other = kwargs["other"] if "other" in kwargs else kwargs["accum"]
                 x2_scale = 1.0
                 x2_zp = 0
+                # Change the post op from sum to binary add for the broadcast cases.
+                if (
+                    post_op_attr.binary_op_name == "sum"
+                    and match.nodes[0].meta["val"].size() != other.meta["val"].size()
+                ):
+                    post_op_attr.binary_op_name = "add"
                 computation_args = (
                     x,
                     x_scale,
