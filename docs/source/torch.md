@@ -810,14 +810,14 @@ For more information, see the [torch.compile documentation](https://pytorch.org/
 <!-- Empty submodules added only for tracking. 
 {py:module}`torch.contrib`
 {py:module}`torch.utils.backcompat`
- -->
+-->
 
 <!-- This module is only used internally for ROCm builds.
-{py:module}`torch.utils.hipify` -->
+{py:module}`torch.utils.hipify`
+-->
 
 
-<!-- This module needs to be documented. Adding here in the meantime
-for tracking purposes 
+<!-- This module needs to be documented. Adding here in the meantime for tracking purposes
 .. py:module:: torch.utils.model_dump
 .. py:module:: torch.utils.viz
 .. py:module:: torch.functional
