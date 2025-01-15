@@ -175,7 +175,7 @@ As of today, accelerator devices are (in no particular order) {doc}`"CUDA" <cuda
    Generator
 ```
 
-## Random sampling
+## <a name="random-sampling"></a>Random sampling
 
 ```{eval-rst}
 .. autosummary::
@@ -220,7 +220,7 @@ As of today, accelerator devices are (in no particular order) {doc}`"CUDA" <cuda
    randperm
 ```
 
-### In-place random sampling
+### <a name="in-place-random-sampling"></a>In-place random sampling
 
 There are a few more in-place random sampling functions defined on Tensors as well. Click through to refer to their documentation:
 
@@ -772,7 +772,6 @@ This feature is a prototype and may have compatibility breaking changes in the f
    :nosignatures:
 
    export
-   generated/exportdb/index
 ```
 
 ## Control Flow
