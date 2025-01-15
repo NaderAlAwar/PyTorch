@@ -720,6 +720,7 @@ Forward-mode AD is not supported.
    compiled_with_cxx11_abi
    result_type
    can_cast
+```
 
 ## Symbolic Numbers
 
