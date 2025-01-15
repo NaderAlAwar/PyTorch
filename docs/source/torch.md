@@ -40,7 +40,7 @@ include:
 {py:func}`torch.randint`
 {py:func}`torch.randint_like`
 {py:func}`torch.randperm`
-You may also use {py:func}`torch.empty` with the [inplace-random-sampling](#inplace-random-sampling)
+You may also use {py:func}`torch.empty` with the [inplace-random-sampling](#in-place-random-sampling)
 methods to create {py:class}`torch.Tensor` s with values sampled from a broader
 range of distributions.
 ```
