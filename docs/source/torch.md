@@ -41,7 +41,7 @@ include:
 {py:func}`torch.randint`
 {py:func}`torch.randint_like`
 {py:func}`torch.randperm`
-You may also use {py:func}`torch.empty` with the {ref}`in-place-random-sampling`
+You may also use {py:func}`torch.empty` with the {ref}`inplace-random-sampling`
 methods to create {py:class}`torch.Tensor` s with values sampled from a broader
 range of distributions.
 ```
@@ -223,7 +223,7 @@ As of today, accelerator devices are (in no particular order) {doc}`"CUDA" <cuda
    randperm
 ```
 
-(in-place-random-sampling)=
+(inplace-random-sampling)=
 ### In-place random sampling
 
 There are a few more in-place random sampling functions defined on Tensors as well. Click through to refer to their documentation:
