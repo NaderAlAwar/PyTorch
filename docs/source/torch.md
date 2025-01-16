@@ -32,7 +32,7 @@
 ### Creation Ops
 
 ```{note}
-Random sampling creation ops are listed under [Random sampling](#random-sampling) and
+Random sampling creation ops are listed under {ref}`random-sampling` and
 include:
 {py:func}`torch.rand`
 {py:func}`torch.rand_like`
@@ -41,7 +41,7 @@ include:
 {py:func}`torch.randint`
 {py:func}`torch.randint_like`
 {py:func}`torch.randperm`
-You may also use {py:func}`torch.empty` with the [inplace-random-sampling](#in-place-random-sampling)
+You may also use {py:func}`torch.empty` with the {ref}`in-place-random-sampling`
 methods to create {py:class}`torch.Tensor` s with values sampled from a broader
 range of distributions.
 ```
