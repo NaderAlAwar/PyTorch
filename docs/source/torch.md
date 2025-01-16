@@ -28,6 +28,7 @@
    set_flush_denormal
 ```
 
+(tensor-creation-ops)=
 ### Creation Ops
 
 ```{note}
@@ -84,7 +85,7 @@ range of distributions.
    polar
    heaviside
 ```
-
+(indexing-slicing-joining)=
 ### Indexing, Slicing, Joining, Mutating Ops
 
 ```{eval-rst}
@@ -144,6 +145,7 @@ range of distributions.
    where
 ```
 
+(accelerators)=
 ## Accelerators
 
 Within the PyTorch repo, we define an "Accelerator" as a {py:class}`torch.device` that is being used
@@ -175,7 +177,8 @@ As of today, accelerator devices are (in no particular order) {doc}`"CUDA" <cuda
    Generator
 ```
 
-## <a name="random-sampling"></a>Random sampling
+(random-sampling)=
+## Random sampling
 
 ```{eval-rst}
 .. autosummary::
@@ -220,7 +223,8 @@ As of today, accelerator devices are (in no particular order) {doc}`"CUDA" <cuda
    randperm
 ```
 
-### <a name="in-place-random-sampling"></a>In-place random sampling
+(in-place-random-sampling)=
+### In-place random sampling
 
 There are a few more in-place random sampling functions defined on Tensors as well. Click through to refer to their documentation:
 
