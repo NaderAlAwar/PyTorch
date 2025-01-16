@@ -766,13 +766,7 @@ Forward-mode AD is not supported.
 This feature is a prototype and may have compatibility breaking changes in the future.
 ```
 
-```{eval-rst}
-.. autosummary::
-   :toctree: generated
-   :nosignatures:
-
-   export
-```
+See [torch.export](https://pytorch.org/docs/main/export.html#module-torch.export)
 
 ## Control Flow
 
