@@ -272,6 +272,7 @@ There are a few more in-place random sampling functions defined on Tensors as we
    set_num_interop_threads
 ```
 
+(torch-rst-local-disable-grad)=
 ## Locally disabling gradient computation
 
 The context managers {py:func}`torch.no_grad`, {py:func}`torch.enable_grad`, and
