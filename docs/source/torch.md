@@ -727,12 +727,26 @@ Forward-mode AD is not supported.
 
 ```{eval-rst}
 .. autosummary::
-   :toctree: generated
-   :nosignatures:
+    :toctree: generated
+    :nosignatures:
 
-   compiled_with_cxx11_abi
-   result_type
-   can_cast
+    compiled_with_cxx11_abi
+    result_type
+    can_cast
+    promote_types
+    use_deterministic_algorithms
+    are_deterministic_algorithms_enabled
+    is_deterministic_algorithms_warn_only_enabled
+    set_deterministic_debug_mode
+    get_deterministic_debug_mode
+    set_float32_matmul_precision
+    get_float32_matmul_precision
+    set_warn_always
+    get_device_module
+    is_warn_always_enabled
+    vmap
+    _assert
+
 ```
 
 ## Symbolic Numbers
@@ -758,11 +772,13 @@ Forward-mode AD is not supported.
    :nosignatures:
 
    sym_float
+   sym_fresh_size
    sym_int
    sym_max
    sym_min
    sym_not
    sym_ite
+   sym_sum
 ```
 
 ## Export Path
