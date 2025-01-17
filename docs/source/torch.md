@@ -823,23 +823,23 @@ For more information, see the [torch.compile documentation](https://pytorch.org/
 ```
 
 <!-- Empty submodules added only for tracking. -->
-{py:mod}`torch.contrib`
-{py:mod}`torch.utils.backcompat`
+```{py:module} torch.contrib```
+```{py:module} torch.utils.backcompat```
 
 <!-- This module is only used internally for ROCm builds. -->
-{py:mod}`torch.utils.hipify`
+```{py:module} torch.utils.hipify```
 
 
 <!-- This module needs to be documented. Adding here in the meantime for tracking purposes --->
-{py:mod}`torch.utils.model_dump`
-{py:mod}`torch.utils.viz`
-{py:mod}`torch.functional`
-{py:mod}`torch.quasirandom`
-{py:mod}`torch.return_types`
-{py:mod}`torch.serialization`
-{py:mod}`torch.signal.windows.windows`
-{py:mod}`torch.sparse.semi_structured`
-{py:mod}`torch.storage`
-{py:mod}`torch.torch_version`
-{py:mod}`torch.types`
-{py:mod}`torch.version`
+```{py:module} torch.utils.model_dump```
+```{py:module} torch.utils.viz```
+```{py:module} torch.functional```
+```{py:module} torch.quasirandom```
+```{py:module} torch.return_types```
+```{py:module} torch.serialization```
+```{py:module} torch.signal.windows.windows```
+```{py:module} torch.sparse.semi_structured```
+```{py:module} torch.storage```
+```{py:module} torch.torch_version```
+```{py:module} torch.types```
+```{py:module} torch.version```
