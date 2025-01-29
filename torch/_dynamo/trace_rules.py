@@ -1,6 +1,5 @@
 # mypy: allow-untyped-defs
 import builtins
-import collections
 import copy
 import dataclasses
 import functools
@@ -3142,7 +3141,6 @@ def is_numpy_type_info(obj) -> bool:
 
 
 BUILTIN_SKIPLIST = (
-    collections,
     copy,
     inspect,
     random,
