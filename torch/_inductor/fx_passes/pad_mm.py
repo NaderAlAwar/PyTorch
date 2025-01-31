@@ -20,6 +20,7 @@ from torch._inductor.autoheuristic.autoheuristic_utils import (
     pad_mm_operations,
     pad_mm_precondition,
 )
+from torch._inductor.runtime.benchmarking import benchmarker
 from torch._subclasses.fake_tensor import FakeTensor
 from torch.utils._mode_utils import no_dispatch
 
@@ -398,7 +399,7 @@ def should_pad_bench(*args: Any, **kwargs: Any) -> bool:
 def get_do_bench() -> Callable[[Callable[[], Any]], float]:
     with dynamo_timed("pad_mm_benchmark_get_do_bench"):
         return functools.partial(
-            torch._inductor.runtime.benchmarking.benchmarker.benchmark_gpu,
+            benchmarker.benchmark_gpu,
             warmup=5,
         )
 
@@ -411,7 +412,6 @@ def _should_pad_bench(
     input: Optional[Tensor] = None,
 ) -> bool:
     do_bench = get_do_bench()
-
     m_padded_length = 0
     n_padded_length = 0
     with no_dispatch():
@@ -599,7 +599,6 @@ def _should_pad_bench(
                 m_padded_length,
                 k_padded_length,
                 n_padded_length,
-                do_bench,
                 mat1_pre_padded,
                 mat2_pre_padded,
                 ori_time,
@@ -610,10 +609,16 @@ def _should_pad_bench(
                 return ah_should_pad
 
         if ori_time is None:
-            ori_time = do_bench(orig_bench_fn)
+            # if we can, we should benchmark the original and padded kernels
+            # together since grouped benchmarking has better accuracy with
+            # lower overhead (since GPU warmups are shared)
+            ori_time, pad_time = benchmarker.benchmark_many_gpu(
+                [orig_bench_fn, pad_bench_fn], warmup=5
+            )
             set_cached_base_mm_benchmark_time(ori_time_key, ori_time)
+        else:
+            pad_time = do_bench(pad_bench_fn)
 
-        pad_time = do_bench(pad_bench_fn)
         return should_pad(key, ori_time, pad_time)
 
 
@@ -660,7 +665,6 @@ def run_autoheuristic(
     m_padded_length: int,
     k_padded_length: int,
     n_padded_length: int,
-    do_bench: Callable[[Callable[[], Any]], float],
     mat1_pre_padded: bool,
     mat2_pre_padded: bool,
     ori_time: float,
@@ -671,9 +675,9 @@ def run_autoheuristic(
         choice: str,
     ) -> Optional[float]:
         if choice == orig_choice:
-            return do_bench(orig_bench_fn)
+            return benchmarker.benchmark_gpu(orig_bench_fn, warmup=5)
         elif choice == pad_choice:
-            return do_bench(pad_bench_fn)
+            return benchmarker.benchmark_gpu(pad_bench_fn, warmup=5)
         return None
 
     def fallback() -> str:
