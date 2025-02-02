@@ -29,6 +29,7 @@ from torch.utils._triton import has_triton_package
 from ...utils._sympy.symbol import free_symbol_is_type, prefix_str, symbol_is_type, SymT
 from ...utils._sympy.value_ranges import ValueRanges
 from .. import config, ir, metrics
+from ..async_compile import AsyncCompile
 from ..codecache import code_hash, get_path, PyCodeCache
 from ..runtime.benchmarking import benchmarker
 from ..runtime.hints import (
@@ -110,7 +111,7 @@ log = logging.getLogger(__name__)
 perf_hint_log = torch._logging.getArtifactLogger(__name__, "perf_hints")
 schedule_log = torch._logging.getArtifactLogger(__name__, "schedule")
 fusion_log = torch._logging.getArtifactLogger(__name__, "fusion")
-
+async_compile = None
 
 class OpDtypeSupport:
     """
@@ -3844,6 +3845,13 @@ class TritonKernel(SIMDKernel[TritonCSEVariable]):
             code.writeline(f"{x}mask = {entry.name} < {x}numel")
 
 
+def get_async_compile():
+    global async_compile
+    if async_compile is None:
+        async_compile = AsyncCompile()
+    return async_compile
+
+
 class TritonScheduling(SIMDScheduling):
     kernel_type: type[Any] = TritonKernel
     backend_features = OrderedSet(
@@ -3939,6 +3947,16 @@ class TritonScheduling(SIMDScheduling):
             src_code = src_code.replace("#pragma CMT", "#")
 
             _basename, _, kernel_path = get_path(code_hash(src_code.strip()), "py")
+
+            # TODO: Refactor this code so that instead of calling async_compile.triton after the entire code has been generated, we
+            # kick off the worker process here to start compiling the code, and save the Future object to await later.
+
+            # If it's a TritonBundler cache hit, we can avoid that altogether and return the compiled kernel directly.
+            async_compile = get_async_compile()
+            if async_compile.use_process_pool():
+                # The process pool is warm, we can shell out to workers right away
+                # The future should be saved in async_compile.future_cache
+                async_compile.triton(subs_name, src_code)
 
             compile_wrapper = IndentedBuffer()
             compile_wrapper.writeline(f"async_compile.triton({subs_name!r}, '''")
