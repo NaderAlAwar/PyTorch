@@ -624,6 +624,64 @@ class AutogradFunctionVariable(VariableTracker):
         super().__init__(**kwargs)
         self.fn_cls = fn_cls
 
+    def as_proxy(self):
+        return self.fn_cls
+
+    def python_type(self):
+        return type(self.fn_cls)
+
+    def var_getattr(self, tx: "InstructionTranslator", name: str) -> "VariableTracker":
+        from torch._functorch.autograd_function import (
+            autograd_function_forward_rewritten,
+        )
+
+        from .builder import SourcelessBuilder, VariableBuilder
+        from .higher_order_ops import AutogradFunctionApplyVariable
+
+        # Special handling for the vmapped autograd function because:
+        # 1. We cannot guard against the vmapped autograd function, as it is generated on the fly.
+        # 2. Skipping this guard is acceptable since we already guard on `id(Generated)`.
+        # 3. `AutogradFunctionApplyVariable` requires `parent_source` to be non-None,
+        #    though this constraint could be relaxed in the future.
+        if (
+            name == "apply"
+            and self.fn_cls.__name__.startswith("Vmapped")
+            and not torch._C._are_functorch_transforms_active()
+        ):
+            forward_fn = autograd_function_forward_rewritten(
+                self.fn_cls.forward, self.fn_cls.setup_context
+            )
+
+            source = self.source
+            if source is None:
+                source = AttrSource(
+                    tx.import_source(self.fn_cls.__module__), self.fn_cls.__name__
+                )
+
+            val = AutogradFunctionApplyVariable(
+                forward_fn,
+                self.fn_cls.backward,
+                source,
+                source=AttrSource(source, member="apply"),
+            )
+            return val
+
+        # General case.
+        try:
+            attr_value = getattr(self.fn_cls, name)
+            source = self.source
+            if source is None:
+                source = AttrSource(
+                    tx.import_source(self.fn_cls.__module__), self.fn_cls.__name__
+                )
+            if source:
+                attr_source = AttrSource(source, name)
+                return VariableBuilder(tx, attr_source)(attr_value)
+            else:
+                return SourcelessBuilder.create(tx, attr_value)
+        except AttributeError:
+            unimplemented(f"getattr({self.fn_cls}, {name})")
+
     def call_apply(self, tx: "InstructionTranslator", args, kwargs):
         requires_grad = False
 
@@ -744,7 +802,17 @@ class AutogradFunctionVariable(VariableTracker):
         from ..trace_rules import is_callable_allowed
         from .builder import wrap_fx_proxy
 
-        if name == "apply":
+        # There are two cases to handle the apply method of an autograd function:
+        # 1. If the autograd function is not vmapified:
+        #    - We can directly handle it by either treating it as allow_in_graph or
+        #      wrapping it as an AutogradFunctionApplyVariable HOP.
+        # 2. If the autograd function is vmapified, there are two types to consider within the same process:
+        #    - The vmapped autograd function (name starts with "Vmapped"):
+        #      - We treat it as allow_in_graph or wrap it as an AutogradFunctionApplyVariable HOP.
+        #    - The original autograd function (be called when functorch transforms are active):
+        #      - Since we already wrap the vmapped autograd function as an AutogradFunctionApplyVariable HOP,
+        #        and the vmapped autograd function calls the original autograd function, we simply inline them.
+        if name == "apply" and not torch._C._are_functorch_transforms_active():
             if is_callable_allowed(self.fn_cls):
                 trampoline_autograd_apply = produce_trampoline_autograd_apply(
                     self.fn_cls
@@ -763,6 +831,7 @@ class AutogradFunctionVariable(VariableTracker):
         elif name == "backward":
             return self.call_backward(tx, args, kwargs)
         else:
+            # Simply inline these methods.
             from .. import trace_rules
 
             source = AttrSource(self.source, name) if self.source is not None else None
@@ -999,6 +1068,12 @@ class GetAttrVariable(VariableTracker):
             return getattr(constant, self.name)
         except AttributeError:
             raise NotImplementedError(f"{self} is not a constant") from None
+
+    def call_obj_hasattr(self, tx: "InstructionTranslator", name):
+        if isinstance(self.obj, AutogradFunctionVariable) and self.name == "apply":
+            return variables.ConstantVariable.create(
+                hasattr(self.obj.fn_cls.apply, name)
+            )
 
     def const_getattr(self, tx: "InstructionTranslator", name):
         if not isinstance(self.obj, variables.NNModuleVariable):
