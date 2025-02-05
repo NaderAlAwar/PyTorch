@@ -24,7 +24,7 @@ import operator
 import sys
 import traceback
 from functools import lru_cache, update_wrapper
-from typing import Optional, Set, TYPE_CHECKING, Union
+from typing import Dict, Set, Optional, TYPE_CHECKING, Union
 
 import torch
 
@@ -54,7 +54,38 @@ sym_node_log = torch._logging.getArtifactLogger(__name__, "sym_node")
 __all__ = ["SymNode", "method_to_operator", "magic_methods"]
 
 
+import functools
+import json
+import os
+
+from torch._guards import TracingContext
 from torch.types import py_sym_types as SymTypes
+from torch.utils._traceback import CapturedTraceback
+
+
+def capture_specialization(fn):
+    @functools.wraps(fn)
+    def wrapper(self, file, line):
+        if (symbol := os.environ.get("CAPTURE_SPECIALIZATION", None)) and symbol in str(
+            self
+        ):
+            out: Dict[str, object] = {
+                "guard": fn.__name__,
+                "self": str(self),
+                "expr": str(self.expr),
+                "hint": str(self.hint),
+                "file": file,
+                "line": line,
+                "framework_stack": "".join(
+                    CapturedTraceback.extract(cpp=True).format()
+                ),
+                "user_stack": "".join(TracingContext.extract_stack().format()),
+            }
+            print(json.dumps(out))
+
+        return fn(self, file, line)
+
+    return wrapper
 
 
 def _to_symtype(t):
@@ -493,6 +524,7 @@ class SymNode:
         return SymNode(out, self.shape_env, int, out_hint, fx_node=fx_node)
 
     # You can manually trigger a guard with this function
+    @capture_specialization
     def guard_int(self, file, line):
         # TODO: use the file/line for some useful diagnostic on why a
         # guard occurred
@@ -503,6 +535,7 @@ class SymNode:
             log.warning("Failed to convert to int: %s", r)
             raise
 
+    @capture_specialization
     def guard_float(self, file, line):
         # TODO: use the file/line for some useful diagnostic on why a
         # guard occurred
@@ -513,6 +546,7 @@ class SymNode:
             log.warning("Failed to convert to float: %s", r)
             raise
 
+    @capture_specialization
     def guard_bool(self, file, line):
         # TODO: use the file/line for some useful diagnostic on why a
         # guard occurred
@@ -523,6 +557,7 @@ class SymNode:
             log.warning("Failed to convert to bool: %s", r)
             raise
 
+    @capture_specialization
     def expect_true(self, file, line):
         from torch.fx.experimental.symbolic_shapes import free_unbacked_symbols
 
@@ -541,6 +576,7 @@ class SymNode:
             self.expr, f"{file}:{line}", fx_node=self.fx_node
         )
 
+    @capture_specialization
     def expect_size(self, file, line):
         from torch.fx.experimental.symbolic_shapes import _advise_is_size
 
