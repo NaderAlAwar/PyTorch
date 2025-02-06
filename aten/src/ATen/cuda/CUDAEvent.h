@@ -13,6 +13,16 @@
 #include <cstdint>
 #include <utility>
 
+/*
+* `cudaEventTimingOnly` is a torch-specific flag that is used to indicate that
+* the CUDAEvent will only be used for timing, and never for synchronization.
+* CUDAEvents used for intra-graph timing must be recorded with `cudaEventRecordExternal`,
+* whereas CUDAEvents used for inter-graph synchronization must never be recorded with
+* `cudaEventRecordExternal`; `cudaEventTimingOnly` enables the distinction between these
+* two use cases. `cudaEventEnableTiming` must be set in conjunction with `cudaEventTimingOnly`.
+*/
+#define cudaEventTimingOnly 0x08
+
 namespace at::cuda {
 
 /*
@@ -118,7 +128,27 @@ struct TORCH_CUDA_CPP_API CUDAEvent {
     TORCH_CHECK(device_index_ == stream.device_index(), "Event device ", device_index_,
       " does not match recording stream's device ", stream.device_index(), ".");
     CUDAGuard guard(device_index_);
+#if defined(USE_ROCM)
+    TORCH_CHECK(
+      (
+        (c10::cuda::currentStreamCaptureStatusMayInitCtx() == c10::cuda::CaptureStatus::None)
+          || (flags_ & cudaEventDisableTiming)
+          || !timing_only_
+      ), "intra-graph CUDAEvent timing is not supported on ROCm.")
     AT_CUDA_CHECK(cudaEventRecord(event_, stream));
+#else
+    AT_CUDA_CHECK(
+      cudaEventRecordWithFlags(
+        event_,
+        stream,
+        (
+          (c10::cuda::currentStreamCaptureStatusMayInitCtx() == c10::cuda::CaptureStatus::None)
+          || (flags_ & cudaEventDisableTiming)
+          || !timing_only_
+        ) ? cudaEventRecordDefault : cudaEventRecordExternal
+      )
+    );
+#endif
     const c10::impl::PyInterpreter* interp = c10::impl::GPUTrace::get_trace();
     if (C10_UNLIKELY(interp)) {
       (*interp)->trace_gpu_event_record(at::kCUDA,
@@ -133,6 +163,7 @@ struct TORCH_CUDA_CPP_API CUDAEvent {
   // The event has no actual GPU resources associated with it.
   void block(const CUDAStream& stream) {
     if (is_created_) {
+      TORCH_CHECK(!timing_only_, "Cannot block on a CUDAEvent initialized with `cudaEventTimingOnly`.");
       CUDAGuard guard(stream.device_index());
       AT_CUDA_CHECK(cudaStreamWaitEvent(stream, event_, 0));
       const c10::impl::PyInterpreter* interp = c10::impl::GPUTrace::get_trace();
@@ -162,6 +193,7 @@ struct TORCH_CUDA_CPP_API CUDAEvent {
   // Note: cudaEventSynchronize can be safely called from any device
   void synchronize() const {
     if (is_created_) {
+      TORCH_CHECK(!timing_only_, "Cannot synchronize on a CUDAEvent initialized with `cudaEventTimingOnly`.");
       const c10::impl::PyInterpreter* interp = c10::impl::GPUTrace::get_trace();
       if (C10_UNLIKELY(interp)) {
           (*interp)->trace_gpu_event_synchronization(at::kCUDA, reinterpret_cast<uintptr_t>(event_));
@@ -185,10 +217,13 @@ private:
   unsigned int flags_ = cudaEventDisableTiming;
   bool is_created_ = false;
   bool was_recorded_ = false;
+  bool timing_only_ = false;
   DeviceIndex device_index_ = -1;
   cudaEvent_t event_{};
 
   void createEvent(DeviceIndex device_index) {
+    timing_only_ = (flags_ & cudaEventTimingOnly) != 0;
+    flags_ &= ~cudaEventTimingOnly;
     device_index_ = device_index;
     CUDAGuard guard(device_index_);
     AT_CUDA_CHECK(cudaEventCreateWithFlags(&event_, flags_));

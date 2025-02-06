@@ -158,17 +158,22 @@ class Event(torch._C._CudaEventBase):
         blocking (bool, optional): if ``True``, :meth:`wait` will be blocking (default: ``False``)
         interprocess (bool): if ``True``, the event can be shared between processes
             (default: ``False``)
+        timing_only (bool, optional): indicates if the event will be used for timing only
+            (default: ``False``)
 
     .. _CUDA Event Documentation:
        https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__EVENT.html
     """
 
-    def __new__(cls, enable_timing=False, blocking=False, interprocess=False):
+    def __new__(
+        cls, enable_timing=False, blocking=False, interprocess=False, timing_only=False
+    ):
         return super().__new__(
             cls,
             enable_timing=enable_timing,
             blocking=blocking,
             interprocess=interprocess,
+            timing_only=timing_only,
         )
 
     @classmethod

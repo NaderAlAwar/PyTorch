@@ -2050,6 +2050,57 @@ torch.cuda.synchronize()
     @unittest.skipIf(
         not TEST_CUDA_GRAPH, "CUDA >= 11.0 or ROCM >= 5.3 required for graphs"
     )
+    def test_graph_debugdump_manual_synchronization(self):
+        torch.cuda.empty_cache()
+        x = torch.randn(10240000, device="cuda")
+        y = torch.rand_like(x)
+        g = torch.cuda.CUDAGraph()
+        g.enable_debug_mode()
+        s0 = torch.cuda.Stream()
+        s1 = torch.cuda.Stream()
+        s0.wait_stream(torch.cuda.current_stream())
+        with torch.cuda.stream(s0):
+            g.capture_begin()
+            z = x + y
+            with torch.cuda.stream(s1):
+                # s1.wait_stream(s0)
+                e0 = torch.cuda.Event()
+                e0.record(s0)
+                s1.wait_event(e0)
+                z + y
+            # s0.wait_stream(s1)
+            e1 = torch.cuda.Event()
+            e1.record(s1)
+            s0.wait_event(e1)
+            g.capture_end()
+        s0.synchronize()
+        torch.cuda.synchronize()
+        with tempfile.TemporaryDirectory() as tempdir:
+            g.debug_dump(os.path.join(tempdir, "out_multi_stream.dot"))
+
+    @unittest.skipIf(
+        not TEST_CUDA_GRAPH or TEST_WITH_ROCM,
+        "CUDA >= 11.0 or ROCM >= 6.4 required for intra-graph timing",
+    )
+    def test_graph_timing(self):
+        torch.cuda.empty_cache()
+        x = torch.randn(10240000, device="cuda")
+        y = torch.rand_like(x)
+        g = torch.cuda.CUDAGraph()
+        start_event = torch.cuda.Event(enable_timing=True, timing_only=True)
+        end_event = torch.cuda.Event(enable_timing=True, timing_only=True)
+        with torch.cuda.graph(g):
+            start_event.record()
+            z = x + y
+            end_event.record()
+        torch.cuda.synchronize()
+        g.replay()
+        torch.cuda.synchronize()
+        self.assertTrue(start_event.elapsed_time(end_event) > 0)
+
+    @unittest.skipIf(
+        not TEST_CUDA_GRAPH, "CUDA >= 11.0 or ROCM >= 5.3 required for graphs"
+    )
     def test_graph_error(self):
         # We need to run this test in a separate thread as the error we trigger
         # puts the cuda context in a bad state
