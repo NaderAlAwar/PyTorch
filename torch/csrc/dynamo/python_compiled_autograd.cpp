@@ -829,6 +829,7 @@ static CacheNode* _compiled_autograd_impl(
       }
       node_args.collect(call);
       if (node_args.cond(call.needed)) {
+        std::cout << "fn=" << fn->name() << ", skip_compiled_autograd=" << fn->skip_compiled_autograd << std::endl;
         fn->compiled_args(node_args);
         node_args.collect(call.node->next_edges());
       }
