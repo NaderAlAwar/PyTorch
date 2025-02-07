@@ -130,8 +130,8 @@ static void linalg_lu_factor_ex_out_mps_impl(const Tensor& A,
                                              bool check_errors) {
   using namespace mps;
 
-  TORCH_CHECK(!c10::isComplexType(A.scalar_type()) && !c10::isComplexType(LU.scalar_type()),
-              "linalg.lu_factor(): MPS doesn't support complex types.");
+  TORCH_CHECK_TYPE(!c10::isComplexType(A.scalar_type()) && !c10::isComplexType(LU.scalar_type()),
+                   "linalg.lu_factor(): MPS doesn't support complex types.");
   TORCH_CHECK(pivot, "linalg.lu_factor(): MPS doesn't allow pivot == False.");
 
   Tensor A_t = A.contiguous();
