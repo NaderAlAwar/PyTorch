@@ -15,6 +15,7 @@
 #include <ATen/native/Resize.h>
 #include <c10/util/MaybeOwned.h>
 #include <ATen/native/cuda/RowwiseScaledMM.h>
+#include <ATen/cuda/tunable/GemmMxUtils.h>
 
 #ifndef AT_PER_OPERATOR_HEADERS
 #include <ATen/Functions.h>
