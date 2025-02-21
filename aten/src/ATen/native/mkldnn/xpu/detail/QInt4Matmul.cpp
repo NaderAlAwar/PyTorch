@@ -170,8 +170,6 @@ static at::Tensor dnnl_matmul_w4a16_common(
     Tensor res_flat,
     Tensor res1_flat) {
   // For GPTQ with desc_act=True scenario
-  TimeLogger& cpu_obj = TimeLogger::get_instance();
-  cpu_obj.record_start();
   auto mat1 = g_idx.has_value() ? mat1_.index_select(-1, g_idx.value()) : mat1_;
 
   auto src_sz = mat1.sizes();
@@ -190,11 +188,11 @@ static at::Tensor dnnl_matmul_w4a16_common(
   at::Device curDevice = at::Device(at::kXPU, device_id);
   auto engine = GpuEngineManager::Instance().get_engine(curDevice);
 
-  dnnl::joint_dtypes jd;
+  joint_dtypes jd;
   if (mat1.scalar_type() == at::ScalarType::Half) {
-    jd = dnnl::joint_dtypes::_f16_int4;
+    jd = joint_dtypes::_f16_int4;
   } else if (mat1.scalar_type() == at::ScalarType::BFloat16) {
-    jd = dnnl::joint_dtypes::_bf16_int4;
+    jd = joint_dtypes::_bf16_int4;
   } else {
     TORCH_INTERNAL_ASSERT(
         false, "Unsupported data type for int4 matmul: ", mat1.scalar_type());
@@ -224,11 +222,9 @@ static at::Tensor dnnl_matmul_w4a16_common(
   const int64_t lda = mat1.strides()[mat1.dim() - 2];
   const int64_t ldc = result.strides()[result.dim() - 2];
 
-  // only support nt for int4 matmul
-  trans_type tt = trans_type::_nt;
+  trans_type tt = trans_type::_nt; // only support nt for int4 matmul
   auto& matmul_ext = dnnlMatmulCreatePrimitive(
       jd, tt, b_type, m, n, k, lda, ldb, ldc, device_id, pattr);
-  cpu_obj.record_phase0();
 
   int arg_off = 0;
   // set scale and zero point for matmul args
@@ -309,12 +305,8 @@ static at::Tensor dnnl_matmul_w4a16_common(
 #endif
 
   auto strm = GpuStreamManager::Instance().get_stream();
-  /* matmul_ext.execute(strm, engine, std::move(arg_handles), arg_off); */
-  cpu_obj.record_phase1();
-  DPCPP_ONEDNN_EXEC_WITH_ARGHANDLES(
-      matmul_ext, strm, engine, arg_handles, arg_off);
+  auto qint4_matmul_event = matmul_ext.execute(strm, engine, std::move(arg_handles), arg_off);
 
-  cpu_obj.record_phase2();
   return result;
 }
 

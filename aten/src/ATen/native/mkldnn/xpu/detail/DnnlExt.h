@@ -24,52 +24,11 @@ struct hash<dnnl::memory::dims> {
 
 } // namespace std
 
+using namespace dnnl;
+
 namespace at::native::onednn {
 
-template <typename T>
-T concat(const T& t1, at::ScalarType d) {
-  T t;
-  t.insert(t.end(), t1.begin(), t1.end());
-  t.push_back((int64_t)d);
 
-  return t;
-}
-
-template <typename T>
-T concat(const T& t1, bool b) {
-  T t;
-  t.insert(t.end(), t1.begin(), t1.end());
-  t.push_back(b);
-
-  return t;
-}
-
-template <typename T>
-T concat(const T& t1, int b) {
-  T t;
-  t.insert(t.end(), t1.begin(), t1.end());
-  t.push_back(b);
-
-  return t;
-}
-
-template <typename T>
-T concat(const T& t1, const T& t2) {
-  T t;
-  t.insert(t.end(), t1.begin(), t1.end());
-  t.insert(t.end(), t2.begin(), t2.end());
-
-  return t;
-}
-
-template <typename T1, typename T2, typename... Ts>
-T1 concat(const T1& t1, const T2& t2, const Ts&... ts) {
-  return concat(concat(t1, t2), ts...);
-}
-
-} // namespace at::native::onednn
-
-namespace dnnl {
 
 class primitive_ext : public primitive {
   static constexpr int max_args = 12;
@@ -349,6 +308,47 @@ enum class joint_dtypes { _f32 = 0, _f16, _bf16, _int8, _f16_int4, _bf16_int4 };
 enum class trans_type { _nn = 0, _nt, _tn, _tt };
 
 enum class bias_type { _none = 0, _scalar, _m, _n, _mn };
+
+template <typename T>
+T concat(const T& t1, at::ScalarType d) {
+  T t;
+  t.insert(t.end(), t1.begin(), t1.end());
+  t.push_back((int64_t)d);
+
+  return t;
+}
+
+template <typename T>
+T concat(const T& t1, bool b) {
+  T t;
+  t.insert(t.end(), t1.begin(), t1.end());
+  t.push_back(b);
+
+  return t;
+}
+
+template <typename T>
+T concat(const T& t1, int b) {
+  T t;
+  t.insert(t.end(), t1.begin(), t1.end());
+  t.push_back(b);
+
+  return t;
+}
+
+template <typename T>
+T concat(const T& t1, const T& t2) {
+  T t;
+  t.insert(t.end(), t1.begin(), t1.end());
+  t.insert(t.end(), t2.begin(), t2.end());
+
+  return t;
+}
+
+template <typename T1, typename T2, typename... Ts>
+T1 concat(const T1& t1, const T2& t2, const Ts&... ts) {
+  return concat(concat(t1, t2), ts...);
+}
 
 // TODO: do we need this?
 template <trans_type Tt, joint_dtypes Ts>
