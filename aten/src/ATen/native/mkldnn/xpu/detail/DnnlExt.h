@@ -303,11 +303,11 @@ class primitive_ext : public primitive {
   dnnl_exec_arg_t c_args[max_args];
 };
 
-enum class joint_dtypes { _f32 = 0, _f16, _bf16, _int8, _f16_int4, _bf16_int4 };
+enum class joint_dtypes_t { _f32 = 0, _f16, _bf16, _int8, _f16_int4, _bf16_int4 };
 
-enum class trans_type { _nn = 0, _nt, _tn, _tt };
+enum class trans_type_t { _nn = 0, _nt, _tn, _tt };
 
-enum class bias_type { _none = 0, _scalar, _m, _n, _mn };
+enum class bias_type_t { _none = 0, _scalar, _m, _n, _mn };
 
 template <typename T>
 T concat(const T& t1, at::ScalarType d) {
@@ -350,25 +350,12 @@ T1 concat(const T1& t1, const T2& t2, const Ts&... ts) {
   return concat(concat(t1, t2), ts...);
 }
 
-// TODO: do we need this?
-template <trans_type Tt, joint_dtypes Ts>
-struct onednn_tag_mapper {
-  static inline std::tuple<dnnl::memory::format_tag, dnnl::memory::format_tag>
-  get() {
-    static_assert(
-        Ts != joint_dtypes::_f16_int4 || Ts != joint_dtypes::_bf16_int4 ||
-            Tt != trans_type::_nt,
-        "only support _nt and int4 ...");
-    return std::make_tuple(
-        dnnl::memory::format_tag::ab, dnnl::memory::format_tag::ba);
-  }
-};
 
-template <joint_dtypes Ts>
+template <joint_dtypes_t Ts>
 struct onednn_types_mapper;
 
 template <>
-struct onednn_types_mapper<joint_dtypes::_f16_int4> {
+struct onednn_types_mapper<joint_dtypes_t::_f16_int4> {
   static inline std::tuple<dnnl::memory::data_type, dnnl::memory::data_type>
   get() {
     return std::make_tuple(
@@ -377,7 +364,7 @@ struct onednn_types_mapper<joint_dtypes::_f16_int4> {
 };
 
 template <>
-struct onednn_types_mapper<joint_dtypes::_bf16_int4> {
+struct onednn_types_mapper<joint_dtypes_t::_bf16_int4> {
   static inline std::tuple<dnnl::memory::data_type, dnnl::memory::data_type>
   get() {
     return std::make_tuple(
@@ -387,19 +374,19 @@ struct onednn_types_mapper<joint_dtypes::_bf16_int4> {
 
 // TODO: bias types maybe not right
 static inline dnnl::memory::dims get_bias_type(
-    bias_type b_dims,
+    bias_type_t b_dims,
     const int m,
     const int n) {
   switch (b_dims) {
-    case bias_type::_none:
+    case bias_type_t::_none:
       return {0};
-    case bias_type::_scalar:
+    case bias_type_t::_scalar:
       return {1, 1};
-    case bias_type::_m:
+    case bias_type_t::_m:
       return {m, 1};
-    case bias_type::_n:
+    case bias_type_t::_n:
       return {1, n};
-    case bias_type::_mn:
+    case bias_type_t::_mn:
       return {m, n};
     default:
       throw std::runtime_error("unsupported bias type ...");
@@ -407,7 +394,7 @@ static inline dnnl::memory::dims get_bias_type(
 }
 
 // TODO: use template specialization on struct 
-template <trans_type Tt>
+template <trans_type_t Tt>
 inline void get_strides(
     memory::dims& src_strides,
     memory::dims& wei_strides,
@@ -417,7 +404,7 @@ inline void get_strides(
     const int64_t ldc) {}
 
 template <>
-inline void get_strides<trans_type::_nt>(
+inline void get_strides<trans_type_t::_nt>(
     memory::dims& src_strides,
     memory::dims& wei_strides,
     memory::dims& dst_strides,
@@ -431,8 +418,8 @@ inline void get_strides<trans_type::_nt>(
 
 using primitive_cache = at::native::onednn::lru_cache<memory::dims, primitive_ext>;
 
-template <trans_type Tt, joint_dtypes Ts, typename F>
-struct create_matmul {
+template <trans_type_t Tt, joint_dtypes_t Ts, typename F>
+struct matmul_primitive_cache_t {
   static inline primitive_ext& get(
       const int m,
       const int n,
@@ -440,7 +427,7 @@ struct create_matmul {
       const int64_t lda,
       const int64_t ldb,
       const int64_t ldc,
-      const bias_type
+      const bias_type_t
           b_dims, // for shapeless bias, not put it into template parameter
       const int device_id,
       F f_attr) {
@@ -451,14 +438,13 @@ struct create_matmul {
         src_strides, wei_strides, m, n, k, int(b_dims));
     auto iter = cached.find(pri_key);
     if (iter == cached.end()) {
-      /* auto [src_fmt, wei_fmt] = onednn_tag_mapper<Tt, Ts>::get(); */
       auto [src_dt, wei_dt] = onednn_types_mapper<Ts>::get();
       auto bias_dims = get_bias_type(b_dims, m, n);
 
       auto src_md = memory::desc({m, k}, src_dt, src_strides);
       auto wei_md = memory::desc({k, n}, wei_dt, wei_strides);
       auto dst_md = memory::desc({m, n}, src_dt, dst_strides);
-      auto bias_format = b_dims == bias_type::_none
+      auto bias_format = b_dims == bias_type_t::_none
           ? dnnl::memory::format_tag::undef
           : dnnl::memory::format_tag::ab;
       auto bias_md =
@@ -470,7 +456,7 @@ struct create_matmul {
       dnnl::matmul::primitive_desc matmul_pd;
       at::Device curDevice = at::Device(at::kXPU, device_id);
       auto aengine = at::native::onednn::GpuEngineManager::Instance().get_engine(curDevice);
-      if (b_dims == bias_type::_none) {
+      if (b_dims == bias_type_t::_none) {
         matmul_pd = dnnl::matmul::primitive_desc(
             aengine, src_md, wei_md, dst_md, pattr);
       } else {
@@ -501,10 +487,10 @@ struct create_matmul {
   }
 };
 
-template <joint_dtypes Ts, typename F>
-static inline primitive_ext& dnnlMatmulCreatePrimitive(
-    const trans_type Tt,
-    const bias_type b_dims,
+template <joint_dtypes_t Ts, typename F>
+static inline primitive_ext& matmul_primitive_create_and_cache(
+    const trans_type_t Tt,
+    const bias_type_t b_dims,
     const int m,
     const int n,
     const int k,
@@ -514,8 +500,8 @@ static inline primitive_ext& dnnlMatmulCreatePrimitive(
     const int device_id,
     F attr) {
   switch (Tt) {
-    case trans_type::_nt:
-      return create_matmul<trans_type::_nt, Ts, F>::get(
+    case trans_type_t::_nt:
+      return matmul_primitive_cache_t<trans_type_t::_nt, Ts, F>::get(
           m, n, k, lda, ldb, ldc, b_dims, device_id, attr);
     default:
       throw std::runtime_error("unsupported trans type ...");
@@ -523,10 +509,10 @@ static inline primitive_ext& dnnlMatmulCreatePrimitive(
 }
 
 template <typename F>
-static inline primitive_ext& dnnlMatmulCreatePrimitive(
-    const joint_dtypes Ts,
-    const trans_type Tt,
-    const bias_type b_dims,
+static inline primitive_ext& matmul_primitive_create_and_cache(
+    const joint_dtypes_t Ts,
+    const trans_type_t Tt,
+    const bias_type_t b_dims,
     const int m,
     const int n,
     const int k,
@@ -536,11 +522,11 @@ static inline primitive_ext& dnnlMatmulCreatePrimitive(
     const int device_id,
     F attr) {
   switch (Ts) {
-    case joint_dtypes::_f16_int4:
-      return dnnlMatmulCreatePrimitive<joint_dtypes::_f16_int4, F>(
+    case joint_dtypes_t::_f16_int4:
+      return matmul_primitive_create_and_cache<joint_dtypes_t::_f16_int4, F>(
           Tt, b_dims, m, n, k, lda, ldb, ldc, device_id, attr);
-    case joint_dtypes::_bf16_int4:
-      return dnnlMatmulCreatePrimitive<joint_dtypes::_bf16_int4, F>(
+    case joint_dtypes_t::_bf16_int4:
+      return matmul_primitive_create_and_cache<joint_dtypes_t::_bf16_int4, F>(
           Tt, b_dims, m, n, k, lda, ldb, ldc, device_id, attr);
     default:
       throw std::runtime_error("Only support int4 ...");

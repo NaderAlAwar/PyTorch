@@ -199,23 +199,23 @@ static at::Tensor dnnl_matmul_w4a16_common(
   }
 
   // TODO: add bias datatype according to onednn requirement
-  bias_type b_type;
+  bias_type_t b_type;
   if (bias.has_value()) {
     auto& b = bias.value();
     const auto nuelm = b.numel();
     if (nuelm == 1) {
-      b_type = bias_type::_scalar;
+      b_type = bias_type_t::_scalar;
     } else if (nuelm == m * n) {
-      b_type = bias_type::_mn;
+      b_type = bias_type_t::_mn;
     } else if (b.size(b.dim() - 1) == n && nuelm == n) {
-      b_type = bias_type::_n;
+      b_type = bias_type_t::_n;
     } else if (b.size(b.dim() - 1) == 1 && nuelm == m) {
-      b_type = bias_type::_m;
+      b_type = bias_type_t::_m;
     } else {
       TORCH_CHECK(0, "unsupported bias dim in matmul ...", b.sizes());
     }
   } else {
-    b_type = bias_type::_none;
+    b_type = bias_type_t::_none;
   }
 
   const int64_t ldb = mat2.strides()[mat2.dim() - 1] * 8; // for int4 matmul
@@ -223,7 +223,7 @@ static at::Tensor dnnl_matmul_w4a16_common(
   const int64_t ldc = result.strides()[result.dim() - 2];
 
   trans_type tt = trans_type::_nt; // only support nt for int4 matmul
-  auto& matmul_ext = dnnlMatmulCreatePrimitive(
+  auto& matmul_ext = matmul_primitive_cache_t(
       jd, tt, b_type, m, n, k, lda, ldb, ldc, device_id, pattr);
 
   int arg_off = 0;
