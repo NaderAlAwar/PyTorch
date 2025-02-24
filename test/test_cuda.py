@@ -3109,6 +3109,7 @@ exit(2)
                 torch.optim.Adadelta,
                 torch.optim.RMSprop,
                 torch.optim.Rprop,
+                torch.optim.SGD,
             ),
             (True, False),
         ):
