@@ -1749,7 +1749,7 @@ def swiglu(input: Tensor, dim: int = -1) -> Tensor:  # noqa: D400,D402
     Applies swish gate linear unit operator.
 
     .. math ::
-        \text{swiglu}(x, y) = x * \swish(y)
+        \text{swiglu}(x, y) = x * swish(y)
 
     where :math:`\text{swish}(x) = x * \sigma(x)`, and :math:`x` and :math:`y` are
     split from the input tensor along the given dimension.
@@ -1757,8 +1757,7 @@ def swiglu(input: Tensor, dim: int = -1) -> Tensor:  # noqa: D400,D402
     See :class:`~torch.nn.SwiGLU` for more details.
     """
     if has_torch_function_unary(input):
-        return handle_torch_function(
-            swiglu, (input,), input, dim=dim)
+        return handle_torch_function(swiglu, (input,), input, dim=dim)
     return torch._C._nn.swiglu(input, dim)
 
 
