@@ -14,12 +14,12 @@ concurrency:
 permissions: read-all
 
 jobs:
-  linux-manylinux-2_39-py3_12-cpu-riscv64-cross-build:
+  pytorch-linux-noble-riscv64-py3.12-gcc14-cross-build:
     if: github.repository_owner == 'pytorch'
-    name: linux-manylinux-2_39-py3_12-cpu-riscv64-cross-build
+    name: pytorch-linux-noble-riscv64-py3.12-gcc14-cross-build
     uses: ./.github/workflows/_linux-build.yml
     with:
-      build-environment: linux-riscv64-binary-manywheel
-      docker-image-name: pytorch/manylinuxriscv64-builder:cpu-riscv64
-      runner: ubuntu-latest
+      build-environment: linux-noble-riscv64-py3.12-gcc14
+      docker-image-name: pytorch-linux-noble-riscv64-py3.12-gcc14
+      runner: linux.2xlarge
     secrets: inherit
