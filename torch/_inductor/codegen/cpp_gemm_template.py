@@ -23,6 +23,7 @@ from ..utils import (
 from ..virtualized import ops, V
 from .cpp import get_export_declaration
 from .cpp_micro_gemm import (
+    CppFP16MicroGemm,
     CppMicroBrgemm,
     CppMicroGemm,
     CppMicroGemmAMX,
@@ -40,6 +41,22 @@ from .cpp_utils import (
 
 
 log = logging.getLogger(__name__)
+
+GEMM_TEMPLATE_INIT_BLOCKING_SMALL_M = r"""
+    constexpr int64_t N = {{N}};
+    constexpr int64_t K = {{K}};
+    constexpr int64_t Mr = {{micro_gemm.register_blocking.block_m}};
+    constexpr int64_t Nr = {{micro_gemm.register_blocking.block_n}};
+    constexpr int64_t Kr = {{micro_gemm.register_blocking.block_k}};
+    constexpr int64_t Nr_blocks = (N + Nr - 1) / Nr;
+    constexpr int64_t Kr_blocks = (K + Kr - 1) / Kr;
+{%- if is_dynamic_M %}
+    const int64_t M = {{kernel.size(GemmOut, 0)}};
+{%- else %}
+    constexpr int64_t M = {{kernel.size(GemmOut, 0)}};
+{%- endif %}
+    const int64_t Mr_blocks = (M + Mr - 1) / Mr;
+"""
 
 GEMM_TEMPLATE_INIT_BLOCKING = r"""
     constexpr int64_t num_threads = {{num_threads}};
@@ -171,11 +188,70 @@ GEMM_TEMPLATE_STUB_DEF = r"""
 {%- if x_scale is not none %}
     {%- set kernel_args = {"X": X, "W": W, "inp": inp, "x_scale": x_scale, "x_zp": x_zp, "w_scale": w_scale, "w_zp": w_zp,} %}
 {%- else %}
-    {%- set kernel_args = {"X": X, "W": W, "inp": inp} %}
+    {%- if w_scale is not none %}
+        {%- set kernel_args = {"X": X, "W": W, "w_scale": w_scale} %}
+    {%- else %}
+        {%- set kernel_args = {"X": X, "W": W, "inp": inp} %}
+    {%- endif %}
 {%- endif %}
 
 extern "C" {{export_declaration}}
 {{kernel.def_kernel(inputs=kernel_args, outputs={"Y": Y}, aliases=aliases)}}
+"""
+
+SMALL_M_GEMM_TEMPLATE = r"""
+{{ template.codegen_gemm_stub_def() }}
+{
+    {{ kernel.maybe_codegen_profile() }}
+    {{ template.codegen_blocks(
+        num_threads, N, K, micro_gemm, is_dynamic_M, kernel, GemmOut, config, L1_cache_size, L2_cache_size, X, W
+    ) }}
+    const int64_t m_start = 0;
+    constexpr int64_t m_end = M;
+    # pragma omp parallel
+    {
+        #pragma omp for nowait
+        for (int64_t nr_block_id = 0; nr_block_id < Nr_blocks; nr_block_id++) {
+            // Handle one output Nr block at a time in each thread
+            int64_t n_start = nr_block_id * Nr;
+            int64_t n_end = (nr_block_id + 1) * Nr;
+    {%- if use_local_acc %}
+    {%- set acc_buf_name = "local_acc_buf" %}
+            {{ kernel.define_thread_local_buffer(acc_buf_name, ["M", "Nr"], acc_buf_dtype) }}
+    {%- set acc = kernel.local_buffers[acc_buf_name] %}
+{%- else %}
+    {%- set acc = kernel.slice_nd(GemmOut, [(0, "M"), ("n_start", "n_end")]) %}
+{%- endif %}
+            for (int64_t kr_block_id = 0; kr_block_id < Kr_blocks; kr_block_id++) {
+                // handle each Kr block in every thread (this loop is not parallelized)
+                int64_t k_start = kr_block_id * Kr;
+                int64_t k_end = std::min((kr_block_id + 1) * Kr, K);
+                {%- set tile_X = kernel.slice_nd(X, [(0, "M"), ("k_start", "k_end")]) %}
+                {%- set tile_W_3d = kernel.slice_nd(W, [("nr_block_id", "nr_block_id + 1"), ("k_start", "k_end"), ()]) %}
+                {%- set tile_W = kernel.view(tile_W_3d, ["k_end - k_start", micro_gemm.register_blocking.block_n]) %}
+                {%- if x_scale is none and w_scale is not none %}
+                    {%- set tile_scale = kernel.slice_nd(w_scale, [("nr_block_id*Nr", "(nr_block_id + 1)*Nr")]) %}
+                    if (kr_block_id == 0) {
+                        {{ micro_gemm.codegen_call(kernel, tile_X, tile_W, acc, accum=False, scales=tile_scale)|indent(28, false) }}
+                    } else {
+                        {{ micro_gemm.codegen_call(kernel, tile_X, tile_W, acc, accum=True, scales=tile_scale)|indent(28, false) }}
+                    }
+                {%- else %}
+                    if (kr_block_id == 0) {
+                        {{ micro_gemm.codegen_call(kernel, tile_X, tile_W, acc, accum=False)|indent(28, false) }}
+                    } else {
+                        {{ micro_gemm.codegen_call(kernel, tile_X, tile_W, acc, accum=True)|indent(28, false) }}
+                    }
+                {%- endif %}
+            }
+            {%- set tile_Y = kernel.slice_nd(Y_2d, [("m_start", "m_end"), ("n_start", "n_end")]) %}
+            {%- set tile_acc = kernel.slice_nd(acc, [("0", "m_end - m_start"), ("0", "n_end - n_start")]) %}
+            {{ kernel.store_output(
+                tile_Y, tile_acc, GemmOut, epilogue_nodes, offsets=("m_start", "n_start"), reindexers=reindexers
+            )|indent(20, false) }}
+        }
+    }
+}
 """
 
 GEMM_TEMPLATE = r"""
@@ -223,10 +299,10 @@ GEMM_TEMPLATE = r"""
                     for (int64_t nci = nc; nci < nc_block_end; nci++) {
 {%- set acc_slice = kernel.slice_nd(acc, [("0", "m_end - m_start"), ("(nci - nc)*Nr", "(nci - nc + 1)*Nr")]) %}
 {%- if template.should_block_weights %}
-{%- set tile_W_3d = kernel.slice_nd(W, [("nci", "nci + 1"), ("k_start", "k_end"), ()]) %}
-{%- set tile_W = kernel.view(tile_W_3d, ["k_end - k_start", micro_gemm.register_blocking.block_n]) %}
+    {%- set tile_W_3d = kernel.slice_nd(W, [("nci", "nci + 1"), ("k_start", "k_end"), ()]) %}
+    {%- set tile_W = kernel.view(tile_W_3d, ["k_end - k_start", micro_gemm.register_blocking.block_n]) %}
 {%- else %}
-{%- set tile_W = kernel.slice_nd(W, [("k_start", "k_end"), ("n_start", "n_start + n_size")]) %}
+    {%- set tile_W = kernel.slice_nd(W, [("k_start", "k_end"), ("n_start", "n_start + n_size")]) %}
 {%- endif %}
                         if (kc == k_block_start) {
                             {{ micro_gemm.codegen_call(kernel, tile_X, tile_W, acc_slice, accum=False)|indent(28, false) }}
@@ -1146,18 +1222,30 @@ class CppGemmTemplate(CppTemplate):
         x_zp = None
         w_scale = None
         w_zp = None
+        X, W = self.input_nodes[0], self.input_nodes[1]
+        Y = self.output_node
         if int8_gemm:
-            X, W = self.input_nodes[0], self.input_nodes[1]
             bias_idx = 2 if self.has_bias else 1
             inp = self.input_nodes[bias_idx] if self.has_bias else None
             x_scale = self.input_nodes[bias_idx + 1]
             x_zp = self.input_nodes[bias_idx + 2]
             w_scale = self.input_nodes[bias_idx + 3]
             w_zp = self.input_nodes[bias_idx + 4]
-            Y = self.output_node
+        elif (
+            self.input_nodes[0].get_dtype() == torch.float16
+            and self.input_nodes[1].get_dtype() == torch.int8
+            and self.m <= 4
+            and self.n % 32 == 0
+            and self.k % 64 == 0
+            and torch._C._cpu._is_avx512_fp16_supported()
+        ):
+            # We use FP16 accum & compute for small M
+            # when AVX512_FP16 ISA is available to
+            # decrease the latency of next-token generation of LLMs.
+            # Application of weight scale is fused in this case.
+            w_scale = self.input_nodes[2]
+            inp = None
         else:
-            X, W = self.input_nodes[0], self.input_nodes[1]
-            Y = self.output_node
             inp = self.input_nodes[2] if self.has_bias else None
 
         template_buffer_has_other_users = None
@@ -1306,6 +1394,7 @@ class CppGemmTemplate(CppTemplate):
         output_dtype, compute_dtype = get_gemm_template_output_and_compute_dtype(
             X.get_dtype()
         )
+
         micro_gemm = create_micro_gemm(
             f"{kernel.kernel_name}_micro_gemm",
             self.m,
@@ -1360,7 +1449,7 @@ class CppGemmTemplate(CppTemplate):
             x_zp=x_zp,
             w_scale=w_scale,
             w_zp=w_zp,
-            acc_buf_dtype=torch.int32 if int8_gemm else torch.float,
+            acc_buf_dtype=micro_gemm.compute_dtype,
             DTYPE_TO_CPP=DTYPE_TO_CPP,
             L1_cache_size=L1_cache_size,
             L2_cache_size=L2_cache_size,
@@ -1390,7 +1479,12 @@ class CppGemmTemplate(CppTemplate):
                 stack.enter_context(
                     patch.object(V.graph, "get_dtype", self._fake_get_dtype(buf))
                 )
-            return self._template_from_string(GEMM_TEMPLATE).render(**options)
+            if isinstance(options["micro_gemm"], CppFP16MicroGemm):
+                return self._template_from_string(SMALL_M_GEMM_TEMPLATE).render(
+                    **options
+                )
+            else:
+                return self._template_from_string(GEMM_TEMPLATE).render(**options)
 
     def codegen_blocks(
         self,
@@ -1422,7 +1516,14 @@ class CppGemmTemplate(CppTemplate):
             X=X,
             W=W,
         )
-        return self._template_from_string(GEMM_TEMPLATE_INIT_BLOCKING).render(options)
+        if isinstance(micro_gemm, CppFP16MicroGemm):
+            return self._template_from_string(
+                GEMM_TEMPLATE_INIT_BLOCKING_SMALL_M
+            ).render(options)
+        else:
+            return self._template_from_string(GEMM_TEMPLATE_INIT_BLOCKING).render(
+                options
+            )
 
     def codegen_microkernel_def(self):
         return self._template_from_string(GEMM_TEMPLATE_MICROKERNEL_DEF).render(
