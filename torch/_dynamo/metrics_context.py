@@ -15,8 +15,8 @@ execution performance.
 from __future__ import annotations
 
 import time
-from typing import Any, Callable, Optional, Self
-from typing_extensions import TypeAlias
+from typing import Any, Callable, Optional
+from typing_extensions import Self, TypeAlias
 
 
 OnExitType: TypeAlias = Callable[
