@@ -223,7 +223,7 @@ static at::Tensor dnnl_matmul_w4a16_common(
   const int64_t ldc = result.strides()[result.dim() - 2];
 
   trans_type tt = trans_type::_nt; // only support nt for int4 matmul
-  auto& matmul_ext = matmul_primitive_cache_t(
+  auto& matmul_ext = matmul_primitive_create_and_cache(
       jd, tt, b_type, m, n, k, lda, ldb, ldc, device_id, pattr);
 
   int arg_off = 0;
