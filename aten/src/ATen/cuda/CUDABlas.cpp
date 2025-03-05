@@ -1612,6 +1612,8 @@ void scaled_gemm(
 #if (!defined(USE_ROCM) && CUDA_VERSION >= 12080) || (defined(USE_ROCM) && ROCM_VERSION >= 60500)
     computeDesc.setAttribute(CUBLASLT_MATMUL_DESC_A_SCALE_MODE, CUBLASLT_MATMUL_MATRIX_SCALE_VEC32_UE8M0);
     computeDesc.setAttribute(CUBLASLT_MATMUL_DESC_B_SCALE_MODE, CUBLASLT_MATMUL_MATRIX_SCALE_VEC32_UE8M0);
+#else
+    TORCH_CHECK(false, "scaled_gemm with `torch.float8_e8m0fnu` scales is only supported for CUDA 12.8 or ROCm 6.5(with gfx950) and above");
 #endif
   }
 
