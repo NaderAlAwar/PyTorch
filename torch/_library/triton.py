@@ -1,6 +1,7 @@
 import contextlib
 import threading
-from typing import Any, Callable, Generator, Iterable, Optional, Union
+from collections.abc import Generator, Iterable
+from typing import Any, Callable, Optional, Union
 
 from torch.utils._exposed_in import exposed_in
 
@@ -39,7 +40,7 @@ def triton_op(
 
     Note that ``fn`` must only consist of calls to PyTorch-understood
     operators and triton kernels. Any triton kernels called inside ``fn``
-    must be wrapped in a call to :func:`torch._library.wrap_triton``.
+    must be wrapped in a call to :func:`torch.library.wrap_triton`.
 
     Args:
         name (str): A name for the custom op that looks like "{namespace}::{name}",
