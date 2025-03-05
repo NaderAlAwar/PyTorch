@@ -264,9 +264,6 @@ static bool isSupportedHipLtROCmArch(int index) {
 #if ROCM_VERSION >= 60500
         "gfx950"
 #endif
-#if ROCM_VERSION >= 60500
-        "gfx950"
-#endif
     };
     for (std::string arch : archs) {
         size_t substring = device_arch.find(arch);
@@ -1005,6 +1002,7 @@ ScalingType get_scaling_type(
     int64_t dim_k,
     int64_t dim_n) {
   // Check for BlockWise scaling (FP8_E8M0 types)
+  // TODO: Check if this also required for ROCm
   if (scale_a.scalar_type() == scale_b.scalar_type() &&
       scale_a.scalar_type() == at::kFloat8_e8m0fnu) {
     constexpr int64_t BLOCK_SIZE_K = 32;
