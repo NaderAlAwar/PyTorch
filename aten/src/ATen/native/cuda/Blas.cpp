@@ -264,6 +264,9 @@ static bool isSupportedHipLtROCmArch(int index) {
 #if ROCM_VERSION >= 60500
         "gfx950"
 #endif
+#if ROCM_VERSION >= 60500
+        "gfx950"
+#endif
     };
     for (std::string arch : archs) {
         size_t substring = device_arch.find(arch);
