@@ -33,13 +33,33 @@ class SampleModelForDynamicShapes(torch.nn.Module):
         return x.relu(), b.sigmoid()
 
 
+class NestedModelForDynamicShapes(torch.nn.Module):
+    def forward(
+        self,
+        x: torch.Tensor,
+        ys: list[torch.Tensor],
+        zs: dict[str, torch.Tensor],
+        c: torch.Tensor,
+    ):
+        y = ys[0] + ys[1] + zs["a"] + zs["b"]
+        w = 5
+        if x.shape[0] < 3 and c.shape[0] != 4:
+            return x + w, x + y, c
+        else:
+            return x - w, x - y, c
+
+
 class TestExportAPIDynamo(common_utils.TestCase):
     """Tests for the ONNX exporter API when dynamo=True."""
 
-    def assert_export(self, *args, **kwargs):
-        onnx_program = torch.onnx.export(*args, **kwargs, dynamo=True)
+    def assert_export(
+        self, *args, strategy: str | None = "TorchExportNonStrictStrategy", **kwargs
+    ):
+        onnx_program = torch.onnx.export(
+            *args, **kwargs, dynamo=True, fallback=False, verbose=False
+        )
         assert onnx_program is not None
-        onnx_testing.assert_onnx_program(onnx_program)
+        onnx_testing.assert_onnx_program(onnx_program, strategy=strategy)
 
     def test_args_normalization_with_no_kwargs(self):
         self.assert_export(
@@ -71,6 +91,7 @@ class TestExportAPIDynamo(common_utils.TestCase):
         self.assert_export(
             SampleModelForDynamicShapes(),
             (torch.randn(2, 2, 3), {"b": torch.randn(2, 2, 3)}),
+            input_names=["x", "b"],
             dynamic_axes={
                 "b": [0, 1, 2],
             },
@@ -80,11 +101,12 @@ class TestExportAPIDynamo(common_utils.TestCase):
         self.assert_export(
             SampleModelForDynamicShapes(),
             (torch.randn(2, 2, 3), {"b": torch.randn(2, 2, 3)}),
+            input_names=["x", "b"],
             dynamic_axes={
                 "b": [0, 1, 2],
             },
         )
-        onnx_program = torch.onnx.export(
+        self.assert_export(
             SampleModelForDynamicShapes(),
             (
                 torch.randn(2, 2, 3),
@@ -93,10 +115,7 @@ class TestExportAPIDynamo(common_utils.TestCase):
             input_names=["x", "b"],
             output_names=["x_out", "b_out"],
             dynamic_axes={"b": [0, 1, 2], "b_out": [0, 1, 2]},
-            dynamo=True,
         )
-        assert onnx_program is not None
-        onnx_testing.assert_onnx_program(onnx_program)
 
     def test_saved_f_exists_after_export(self):
         with common_utils.TemporaryFileName(suffix=".onnx") as path:
@@ -110,10 +129,14 @@ class TestExportAPIDynamo(common_utils.TestCase):
             def forward(self, x):
                 return x
 
-        self.assert_export(torch.jit.script(ScriptModule()), (torch.randn(1, 1, 2),))
+        self.assert_export(
+            torch.jit.script(ScriptModule()),
+            (torch.randn(1, 1, 2),),
+            strategy="JitTraceConvertStrategy",
+        )
 
     def test_dynamic_shapes_with_fully_specified_axes(self):
-        exported_program = torch.export.export(
+        ep = torch.export.export(
             SampleModelForDynamicShapes(),
             (
                 torch.randn(2, 2, 3),
@@ -131,9 +154,10 @@ class TestExportAPIDynamo(common_utils.TestCase):
                     2: torch.export.Dim("customb_dim_2"),
                 },
             },
+            strict=True,
         )
 
-        self.assert_export(exported_program)
+        self.assert_export(ep, strategy=None)
 
     def test_partial_dynamic_shapes(self):
         self.assert_export(
@@ -180,6 +204,47 @@ class TestExportAPIDynamo(common_utils.TestCase):
         )
         assert onnx_program is not None
         onnx_testing.assert_onnx_program(onnx_program)
+
+    def test_dynamic_shapes_supports_nested_input_model_with_input_names_assigned(self):
+        # kwargs can still be renamed as long as it's in order
+        input_names = ["input_x", "input_y", "input_z", "d", "e", "f"]
+
+        dynamic_axes = {
+            "input_x": {0: "dim"},
+            "input_y": {0: "dim"},
+            "input_z": {0: "dim"},
+            "d": {0: "dim"},
+            "e": {0: "dim"},
+        }
+
+        model = NestedModelForDynamicShapes()
+        input = (
+            torch.ones(5),
+            [torch.zeros(5), torch.ones(5)],
+            {"a": torch.zeros(5), "b": torch.ones(5)},
+            torch.ones(4),
+        )
+
+        self.assert_export(
+            model, input, dynamic_axes=dynamic_axes, input_names=input_names
+        )
+
+        # Check whether inputs are dynamically shaped
+        onnx_program = torch.onnx.export(
+            model,
+            input,
+            dynamic_axes=dynamic_axes,
+            input_names=input_names,
+            dynamo=True,
+        )
+        self.assertTrue(
+            all(
+                [
+                    input.type.tensor_type.shape.dim[0].dim_param
+                    for input in onnx_program.model_proto.graph.input
+                ][:-1]
+            )
+        )
 
     def test_refine_dynamic_shapes_with_onnx_export(self):
         # NOTE: From test/export/test_export.py
@@ -309,7 +374,9 @@ class TestFakeTensorExport(common_utils.TestCase):
                 def forward(self, x):
                     return self.weight + x
 
-            onnx_program = torch.onnx.export(Model(), (torch.tensor(1.0),), dynamo=True)
+            onnx_program = torch.onnx.export(
+                Model(), (torch.tensor(1.0),), dynamo=True, optimize=False
+            )
             assert onnx_program is not None
             # Convert to model proto and back to trigger to_bytes method which serializes the tensor
             with self.assertRaises(Exception):
@@ -339,7 +406,9 @@ class TestFakeTensorExport(common_utils.TestCase):
                 return self.weight + x
 
         with torch.onnx.enable_fake_mode():
-            onnx_program = torch.onnx.export(Model(), (torch.tensor(1.0),), dynamo=True)
+            onnx_program = torch.onnx.export(
+                Model(), (torch.tensor(1.0),), dynamo=True, optimize=False
+            )
             assert onnx_program is not None
             # Convert to model proto and back to trigger to_bytes method which serializes the tensor
             with self.assertRaises(Exception):
@@ -371,7 +440,7 @@ class TestFakeTensorExport(common_utils.TestCase):
 
         with torch.onnx.enable_fake_mode():
             onnx_program = torch.onnx.export(
-                real_model, (torch.tensor(1.0),), dynamo=True
+                real_model, (torch.tensor(1.0),), dynamo=True, optimize=False
             )
 
             assert onnx_program is not None
