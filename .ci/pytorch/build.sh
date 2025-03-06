@@ -120,6 +120,8 @@ if [[ "$BUILD_ENVIRONMENT" == *riscv64* ]]; then
   export SLEEF_TARGET_EXEC_USE_QEMU=ON
   # TODO: Remove the following sleef update code once the submodule is updated to the b56eab1
   # Update sleef submodule for RISC-V
+  sudo chown -R jenkins /var/lib/jenkins/workspace /opt
+  git config --global --add safe.directory /var/lib/jenkins/workspace
   git submodule update --init third_party/sleef
   cd third_party/sleef
   git remote add upstream https://github.com/shibatch/sleef || true
