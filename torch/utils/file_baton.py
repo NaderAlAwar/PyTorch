@@ -18,6 +18,8 @@ class FileBaton:
         self.lock_file_path = lock_file_path
         self.wait_seconds = wait_seconds
         self.fd = None
+        if os.path.exists(self.lock_file_path):
+            print(f"WARN: You may want to delete existing lock file: {self.lock_file_path}")
 
     def try_acquire(self):
         """
