@@ -378,13 +378,18 @@ class NewBatchSampler(BatchSampler):
         # Implemented based on the benchmarking in https://github.com/pytorch/pytorch/pull/76951
         if isinstance(self.sampler, ArrayableSampler):
             indices = self.sampler.to_array()
-            indices_batches = [
-                indices[i: i + self.batch_size]
-                for i in range(0, len(indices), self.batch_size)
-            ]
-            if self.drop_last and len(indices) % self.batch_size > 0:
-                indices_batches.pop()
-            yield from indices_batches
+
+            reminder_size = len(indices) % self.batch_size
+            if reminder_size > 0:
+                indices, last = indices[:-reminder_size], indices[-reminder_size:]
+            else:
+                last = None
+
+            indices_batched = indices.reshape(-1, self.batch_size)
+            yield from indices_batched
+
+            if not self.drop_last and last is not None:
+                yield last
 
         else:
             sampler_iter = iter(self.sampler)
@@ -398,4 +403,3 @@ class NewBatchSampler(BatchSampler):
                 while batch:
                     yield batch
                     batch = [*itertools.islice(sampler_iter, self.batch_size)]
-
