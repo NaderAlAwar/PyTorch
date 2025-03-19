@@ -274,11 +274,13 @@ class RegisterDispatchKey:
 
         device_check = "std::optional<Device> common_device = std::nullopt;\n"
         device_check += "(void)common_device; // Suppress unused variable warning\n"
+        device_check += "bool is_cpu_zero_dim = false;\n"
+        device_check += "(void) is_cpu_zero_dim;\n"
         for arg in args:
             # Only tensor like arguments are eligible
             if arg.type.is_tensor_like():
                 device_check += f"""
-  c10::impl::check_and_update_common_device(common_device, {arg.name}, "{method_name}", "{arg.name}");"""
+  c10::impl::check_and_update_common_device(common_device, is_cpu_zero_dim, {arg.name}, "{method_name}", "{arg.name}");"""
         return device_check
 
     @method_with_native_function
@@ -332,7 +334,7 @@ class RegisterDispatchKey:
                 f"{copy_op}(std::get<{i}>({func_res}), {ret_name});"
                 for i, ret_name in enumerate(return_names)
             )
-            returns = f'{sig.returns_type().cpp_type()}({", ".join(return_names)})'
+            returns = f"{sig.returns_type().cpp_type()}({', '.join(return_names)})"
         elif len(return_names) == 1:
             ret_name = return_names[0]
             updates = f"{copy_op}({func_res}, {ret_name});"
@@ -448,7 +450,7 @@ class RegisterDispatchKey:
                 def generate_defn(cpp_sig: CppSignature) -> str:
                     return f"""
 {cpp_sig.defn()} {{
-return {sig.name()}({', '.join(e.expr for e in translate(cpp_sig.arguments(), sig.arguments()))});
+return {sig.name()}({", ".join(e.expr for e in translate(cpp_sig.arguments(), sig.arguments()))});
 }}
 """
 
@@ -802,7 +804,7 @@ resize_out(out, sizes, strides, options);
             def generate_defn(cpp_sig: CppSignature) -> str:
                 return f"""
 {cpp_sig.defn()} {{
-return {sig.name()}({', '.join(e.expr for e in translate(cpp_sig.arguments(), sig.arguments()))});
+return {sig.name()}({", ".join(e.expr for e in translate(cpp_sig.arguments(), sig.arguments()))});
 }}
 """
 
@@ -986,12 +988,15 @@ return {sig.name()}({', '.join(e.expr for e in translate(cpp_sig.arguments(), si
             # For an overview of what this template code looks like, see
             # https://github.com/pytorch/rfcs/pull/9
             return f"""\
-{self.gen_class(
-f, k,
-class_name=class_name,
-parent_class=parent_class,
-generate_super=self.g.out.structured_inherits is not None
-)}
+{
+                self.gen_class(
+                    f,
+                    k,
+                    class_name=class_name,
+                    parent_class=parent_class,
+                    generate_super=self.g.out.structured_inherits is not None,
+                )
+            }
 
 {sig.defn()} {{
 {sig_body_str}
