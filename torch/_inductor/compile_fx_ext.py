@@ -231,7 +231,7 @@ class _WireProtocolPickledInput:
         from torch.fx._graph_pickler import GraphPickler
 
         fake_mode = _current_fake_mode()
-        result = GraphPickler.loads(self.value, fake_mode)
+        result = GraphPickler.loads(self.value, fake_mode, compiler_name="inductor")
         assert isinstance(result, _WireProtocolInput)
         return result
 
@@ -271,7 +271,7 @@ class _WireProtocolPickledOutput:
         from torch.fx._graph_pickler import GraphPickler
 
         fake_mode = _current_fake_mode()
-        result = GraphPickler.loads(self.value, fake_mode)
+        result = GraphPickler.loads(self.value, fake_mode, compiler_name="inductor")
         assert isinstance(result, _WireProtocolOutput)
         if isinstance(result.graph, CompiledFxGraph):
             result.graph.after_deserialization(constants)
