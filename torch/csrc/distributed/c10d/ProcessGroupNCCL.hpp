@@ -892,7 +892,8 @@ class TORCH_API ProcessGroupNCCL : public Backend {
       OpType opType,
       const char* profilingTitle = nullptr,
       bool avoidRecordStreams = false,
-      bool nanCheck = true);
+      bool nanCheck = true,
+      bool asyncOp = false);
 
   template <typename Fn, typename PreProcess, typename PostProcess>
   c10::intrusive_ptr<Work> collective(
@@ -904,7 +905,8 @@ class TORCH_API ProcessGroupNCCL : public Backend {
       OpType opType,
       const char* profilingTitle = nullptr,
       bool avoidRecordStreams = false,
-      bool nanCheck = true);
+      bool nanCheck = true,
+      bool asyncOp = false);
 
   template <typename Fn, typename PreProcess, typename PostProcess>
   c10::intrusive_ptr<Work> collective(
@@ -916,7 +918,8 @@ class TORCH_API ProcessGroupNCCL : public Backend {
       OpType opType,
       const char* profilingTitle = nullptr,
       bool avoidRecordStreams = false,
-      bool nanCheck = true);
+      bool nanCheck = true,
+      bool asyncOp = false);
 
   template <typename Fn>
   c10::intrusive_ptr<Work> collectiveCoalesced(
