@@ -1640,6 +1640,7 @@ def handle_log_file(
             if re.search("Running .* items in this shard:", line):
                 print_to_stderr(line.rstrip())
         print_to_stderr("")
+        count_log_files()
         return
 
     # otherwise: print entire file
@@ -2400,7 +2401,7 @@ def count_log_files() -> None:
     """Count the number of log files in test/test-reports"""
     test_reports_dir = str(REPO_ROOT / "test/test-reports")
     num = len([f for f in os.listdir(test_reports_dir) if f.endswith(".log")])
-    print_to_stderr(f"There are {num} log files in test/test-reports")
+    print_to_stderr(f"There are {num} log files in {REPO_ROOT / 'test/test-reports'}")
 
 
 def main():

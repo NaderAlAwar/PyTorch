@@ -304,6 +304,7 @@ test_python_shard() {
   # modify LD_LIBRARY_PATH to ensure it has the conda env.
   # This set of tests has been shown to be buggy without it for the split-build
   time python test/run_test.py --exclude-jit-executor --exclude-distributed-tests $INCLUDE_CLAUSE --shard "$1" "$NUM_TEST_SHARDS" --verbose $PYTHON_TEST_EXTRA_OPTION --upload-artifacts-while-running
+  pwd
   find test/test-reports -name "*.log" -type f | grep -q . || (echo "No log files found" && exit 1)
 
   assert_git_not_dirty
@@ -1645,9 +1646,11 @@ elif [[ "${SHARD_NUMBER}" == 1 && $NUM_TEST_SHARDS -gt 1 ]]; then
   install_torchvision
   test_python_shard 1
   test_aten
+  pwd
   find test/test-reports -name "*.log" -type f | grep -q . || (echo "No log files found" && exit 1)
 
   test_libtorch 1
+  pwd
   find test/test-reports -name "*.log" -type f | grep -q . || (echo "No log files found" && exit 1)
 
   if [[ "${BUILD_ENVIRONMENT}" == *xpu* ]]; then
@@ -1656,27 +1659,34 @@ elif [[ "${SHARD_NUMBER}" == 1 && $NUM_TEST_SHARDS -gt 1 ]]; then
 elif [[ "${SHARD_NUMBER}" == 2 && $NUM_TEST_SHARDS -gt 1 ]]; then
   install_torchvision
   test_python_shard 2
+  pwd
   find test/test-reports -name "*.log" -type f | grep -q . || (echo "No log files found" && exit 1)
 
   test_libtorch 2
+  pwd
   find test/test-reports -name "*.log" -type f | grep -q . || (echo "No log files found" && exit 1)
 
   test_aot_compilation
+  pwd
   find test/test-reports -name "*.log" -type f | grep -q . || (echo "No log files found" && exit 1)
 
   test_custom_script_ops
+  pwd
   find test/test-reports -name "*.log" -type f | grep -q . || (echo "No log files found" && exit 1)
 
   test_custom_backend
+  pwd
   find test/test-reports -name "*.log" -type f | grep -q . || (echo "No log files found" && exit 1)
 
   test_torch_function_benchmark
+  pwd
   find test/test-reports -name "*.log" -type f | grep -q . || (echo "No log files found" && exit 1)
 
 elif [[ "${SHARD_NUMBER}" -gt 2 ]]; then
   # Handle arbitrary number of shards
   install_torchvision
   test_python_shard "$SHARD_NUMBER"
+  pwd
   find test/test-reports -name "*.log" -type f | grep -q . || (echo "No log files found" && exit 1)
 
 elif [[ "${BUILD_ENVIRONMENT}" == *vulkan* ]]; then
@@ -1705,4 +1715,5 @@ else
   test_torch_function_benchmark
   test_benchmarks
 fi
+pwd
 find test/test-reports -name "*.log" -type f | grep -q . || (echo "No log files found" && exit 1)
