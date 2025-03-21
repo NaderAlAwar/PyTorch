@@ -27,6 +27,7 @@ from types import FrameType
 from typing import Any, Callable, Optional, Union
 
 import torch.multiprocessing as mp
+from torch.distributed.elastic.events import Event, EventSource, record as record_event
 from torch.distributed.elastic.multiprocessing.errors import ProcessFailure, record
 from torch.distributed.elastic.multiprocessing.redirects import (
     redirect_stderr,
@@ -69,6 +70,20 @@ class SignalException(Exception):
     def __init__(self, msg: str, sigval: signal.Signals) -> None:
         super().__init__(msg)
         self.sigval = sigval
+
+
+def _construct_event(
+    source: EventSource,
+    global_rank: Optional[int] = None,
+    raw_error: Optional[str] = None,
+    local_rank: Optional[int] = None,
+) -> Event:
+    metadata = {
+        "global_rank": global_rank,
+        "raw_error": raw_error,
+        "local_rank": local_rank,
+    }
+    return Event("torchelastic.worker.closure", source=source, metadata=metadata)
 
 
 def _terminate_process_handler(signum: int, frame: Optional[FrameType]) -> None:
@@ -924,3 +939,11 @@ class SubprocessContext(PContext):
                 )
                 handler.close(death_sig=_get_kill_signal())
                 handler.proc.wait()
+                record_event(
+                    _construct_event(
+                        EventSource.WORKER,
+                        handler.global_rank,
+                        "SIGKILLed",
+                        handler.local_rank_id,
+                    )
+                )
