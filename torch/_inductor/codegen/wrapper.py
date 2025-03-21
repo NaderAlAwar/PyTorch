@@ -345,6 +345,14 @@ class EnterSubgraphLine(WrapperLine):
 
 
 @dataclasses.dataclass
+class CommentLine(WrapperLine):
+    line: Line
+
+    def codegen(self, code: IndentedBuffer) -> None:
+        code.writeline(self.line)
+
+
+@dataclasses.dataclass
 class ExitSubgraphLine(WrapperLine):
     wrapper: PythonWrapperCodegen
 
@@ -454,6 +462,18 @@ class AllocateLine(MemoryPlanningLine):
 
 
 @dataclasses.dataclass
+class FreeLine(MemoryPlanningLine):
+    node: BufferLike
+
+    def plan(self, state: MemoryPlanningState) -> MemoryPlanningLine:
+        return self
+
+    def codegen(self, code: IndentedBuffer) -> None:
+        assert self.node.get_name() not in V.graph.removed_buffers
+        code.writeline(self.wrapper.make_buffer_free(self.node))
+
+
+@dataclasses.dataclass
 class FreeIfNotReusedLine(MemoryPlanningLine):
     node: BufferLike
     is_reused: bool = False
@@ -474,6 +494,21 @@ class FreeIfNotReusedLine(MemoryPlanningLine):
         assert self.node.get_name() not in V.graph.removed_buffers
         if not self.is_reused:
             code.writeline(self.wrapper.make_buffer_free(self.node))
+
+
+@dataclasses.dataclass
+class ReinterpretLine(MemoryPlanningLine):
+    node: BufferLike
+    reused_as: BufferLike
+    layout: ir.Layout
+
+    def plan(self, state: MemoryPlanningState) -> MemoryPlanningLine:
+        return self
+
+    def codegen(self, code: IndentedBuffer) -> None:
+        code.writeline(
+            self.wrapper.codegen_deferred_allocation(self.node.get_name(), self.layout)
+        )
 
 
 @dataclasses.dataclass
@@ -580,7 +615,50 @@ class CommBufferFreeLine(CommBufferLine):
         code.writeline(f"{line} # {self.comm_buffer_type.value} buffer free")
 
 
+@dataclasses.dataclass
+class MultiOutputLine(WrapperLine):
+    """
+    Given a MultiOutputLayout buffer, indexes actual buffer(s) from the result.
+    """
+
+    wrapper: PythonWrapperCodegen
+    result_name: str
+    arg_name: str
+    indices: Sequence[Any]
+
+    def codegen(self, code: IndentedBuffer) -> None:
+        def codegen_list_tuple_access(basename, indices):  # type: ignore[no-untyped-def]
+            if len(indices) > 0:
+                itype, i = indices[0]
+                if issubclass(itype, list):
+                    return codegen_list_tuple_access(f"{basename}[{i}]", indices[1:])
+                elif issubclass(itype, tuple):
+                    # cpp wrapper code needs to use std::get<> to access a tuple
+                    # TODO(blainer) does this refactor break cpp_codegen? It seems to override this entirely.
+                    tuple_access = self.wrapper.codegen_tuple_access(
+                        basename, self.result_name, str(i)
+                    )
+                    return codegen_list_tuple_access(tuple_access, indices[1:])
+                elif issubclass(itype, dict):
+                    return codegen_list_tuple_access(f"{basename}['{i}']", indices[1:])
+                else:
+                    raise AssertionError("non supported index type: ", itype)
+            else:
+                return basename
+
+        value = codegen_list_tuple_access(self.arg_name, self.indices)
+        code.writeline(
+            f"{self.wrapper.declare}{self.result_name} = {value}{self.wrapper.ending}"
+        )
+
+
+@dataclasses.dataclass
+class OutputLine(WrapperLine):
+    buffers: tuple[BufferLike, ...]
+
+
 BufferName = str
+Line = Union[MemoryPlanningLine, LineContext]
 
 
 class PythonWrapperCodegen(CodeGen):
@@ -605,7 +683,7 @@ class PythonWrapperCodegen(CodeGen):
         # pre-existing kernel for it
         self.src_to_kernel: dict[str, str] = {}
         self.kernel_numel_expr: OrderedSet[tuple[str, GraphLowering]] = OrderedSet()
-        self.lines: list[Union[MemoryPlanningLine, LineContext]] = []
+        self.lines: list[Line] = []
         self.declare = ""
         self.declare_maybe_reference = ""
         self.ending = ""
@@ -1055,6 +1133,7 @@ class PythonWrapperCodegen(CodeGen):
         out_view: Optional[str],
         args: list[str],
         device: str,
+        node: ir.ExternKernelOut,
     ) -> None:
         # add debug printer code for triton kernel calls at (jit) inductor level
         debug_printer_manager = V.graph.wrapper_code.debug_printer
@@ -1426,8 +1505,10 @@ class PythonWrapperCodegen(CodeGen):
     def codegen_device_copy(self, src, dst, non_blocking: bool):
         self.writeline(f"{dst}.copy_({src}, {non_blocking})")
 
-    def codegen_multi_output(self, name, value):
-        self.writeline(f"{self.declare}{name} = {value}{self.ending}")
+    def codegen_multi_output(self, node: ir.MultiOutput):
+        result_name = node.get_name()
+        arg_name = node.inputs[0].get_name()
+        self.writeline(MultiOutputLine(self, result_name, arg_name, node.indices))
 
     def codegen_dynamic_scalar(self, node):
         (data,) = (t.codegen_reference() for t in node.inputs)
@@ -1561,6 +1642,24 @@ class PythonWrapperCodegen(CodeGen):
                 ]
             )
 
+    def _format_kernel_definition(
+        self,
+        kernel_name: str,
+        kernel_body: str,
+        metadata: Optional[str] = None,
+    ):
+        if config.triton.autotune_at_compile_time:
+            # Skip inserting comments for the autotune block as they may contain cpp style comments
+            code = f"\n\n{kernel_name} = {kernel_body}"
+            self.kernel_autotune_defs.splice(code)
+            if V.graph.cpp_wrapper:
+                # For cpp wrapper, no need to continue codegen for the main body
+                return code
+
+        metadata_comment = f"{metadata}\n" if metadata else ""
+        code = f"\n\n{metadata_comment}{kernel_name} = {kernel_body}"
+        return code
+
     def define_kernel(
         self,
         kernel_name: str,
@@ -1569,16 +1668,8 @@ class PythonWrapperCodegen(CodeGen):
         gpu: bool = True,
         cpp_definition: Optional[str] = None,
     ):
-        if config.triton.autotune_at_compile_time:
-            # Skip inserting comments for the autotune block as they may contain cpp style comments
-            body = f"\n\n{kernel_name} = {kernel_body}"
-            self.kernel_autotune_defs.splice(body)
-            if V.graph.cpp_wrapper:
-                # For cpp wrapper, no need to continue codegen for the main body
-                return
-        metadata_comment = f"{metadata}\n" if metadata else ""
-        body = f"\n\n{metadata_comment}{kernel_name} = {kernel_body}"
-        self.header.splice(body)
+        code = self._format_kernel_definition(kernel_name, kernel_body, metadata)
+        self.header.splice(code)
 
     def define_subgraph_launcher_fn(self, fn_code: str):
         self.subgraph_definitions.splice(fn_code)
@@ -2242,6 +2333,9 @@ class PythonWrapperCodegen(CodeGen):
             out = out + f".as_strided({codegen_shape_tuple}, {codegen_stride_tuple})"
         return out
 
+    def make_comment(self, line):
+        self.writeline(CommentLine(line))
+
     def make_tensor_alias(self, new_name, old_name, comment=""):
         return f"{self.declare}{new_name} = {old_name}{self.ending}  {self.comment} {comment}"
 
@@ -2270,12 +2364,10 @@ class PythonWrapperCodegen(CodeGen):
         )
         return f"{self.declare}{new_name} = {reinterpret_view}{del_line}  {self.comment} reuse"
 
-    def codegen_deferred_allocation(self, name: str, view: ir.ReinterpretView) -> None:
-        self.writeline(
-            DeferredLine(
-                name,
-                f"{self.declare}{name} = {view.codegen_reference()}{self.ending}  {self.comment} alias",
-            )
+    def codegen_deferred_allocation(self, name, layout) -> DeferredLine:
+        return DeferredLine(
+            name,
+            f"{self.declare}{name} = {view.codegen_reference()}{self.ending}  {self.comment} alias",
         )
 
     def codegen_allocation(self, buffer: ir.Buffer):
@@ -2306,10 +2398,12 @@ class PythonWrapperCodegen(CodeGen):
             assert isinstance(layout.view, ir.ReinterpretView), (
                 f"unexpected {type(layout.view)}: {layout.view}"
             )
-            assert isinstance(layout.view.data, ir.StorageBox), type(layout.view.data)
-            assert isinstance(layout.view.data.data, ir.Buffer), type(layout.view.data)
-            self.codegen_allocation(layout.view.data.data)
-            self.codegen_deferred_allocation(name, layout.view)
+            box = layout.view.data
+            assert isinstance(box, ir.StorageBox), type(box)
+            input_buffer = box.data
+            assert isinstance(input_buffer, ir.Buffer), type(box)
+            self.codegen_allocation(input_buffer)
+            self.writeline(ReinterpretLine(self, input_buffer, buffer, layout))
             return
 
         if isinstance(layout, ir.CommBufferLayout):
@@ -2323,7 +2417,7 @@ class PythonWrapperCodegen(CodeGen):
 
         # can be freed but not reused
         if isinstance(buffer, (ir.InputBuffer, ir.TorchBindObject)):
-            self.writeline(self.make_buffer_free(buffer))
+            self.writeline(FreeLine(self, buffer))
             return
 
         if isinstance(buffer.get_output_spec(), ir.CommBufferLayout):

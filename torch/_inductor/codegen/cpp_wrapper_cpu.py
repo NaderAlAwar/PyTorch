@@ -1193,6 +1193,7 @@ class CppWrapperCpu(PythonWrapperCodegen):
         out_view: Optional[str],
         args: list[str],
         device: str,
+        node: ir.ExternKernelOut,
     ) -> None:
         if out_view:
             out_name = f"{out}_as_strided"
@@ -1631,7 +1632,7 @@ class CppWrapperCpu(PythonWrapperCodegen):
             f"AOTI_TORCH_ERROR_CODE_CHECK(aoti_torch_copy_({dst}, {src}, {non_blocking}));"
         )
 
-    def codegen_multi_output(self, name, value):
+    def codegen_multi_output(self, node: ir.MultiOutput):
         # in the abi_compatible mode, outputs are retrieved by passing
         # output pointers, so we skip its codegen here.
         pass

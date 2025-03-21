@@ -5036,7 +5036,7 @@ class ExternKernel(InputsKernel):
     def codegen_comment(self, wrapper) -> None:  # type: ignore[no-untyped-def]
         origin_str, _detailed_origin_str = get_kernel_metadata(self, wrapper)
         if origin_str:
-            wrapper.writeline(origin_str)
+            wrapper.make_comment(origin_str)
 
     def codegen(self, wrapper):  # type: ignore[no-untyped-def]
         raise NotImplementedError
@@ -5744,6 +5744,7 @@ class ExternKernelOut(ExternKernel):
             self.output_view.codegen_reference() if self.output_view else None,
             args,
             device,
+            self,
         )
 
     def __init__(  # type: ignore[no-untyped-def]
@@ -6976,32 +6977,8 @@ class MultiOutputLayout(OutputSpec):
 
 
 class MultiOutput(ExternKernel):
-    # Given an input MultiOutputLayout buffer, indexes out an actual buffer
-    # from that result.  This doesn't actually produce multiple outputs,
-    # that's MultiOutputLayout!
-    def codegen_list_tuple_access(self, basename, indices):  # type: ignore[no-untyped-def]
-        if len(indices) > 0:
-            itype, i = indices[0]
-            if issubclass(itype, list):
-                return self.codegen_list_tuple_access(f"{basename}[{i}]", indices[1:])
-            elif issubclass(itype, tuple):
-                # cpp wrapper code needs to use std::get<> to access a tuple
-                tuple_access = V.graph.wrapper_code.codegen_tuple_access(
-                    basename, self.get_name(), str(i)
-                )
-                return self.codegen_list_tuple_access(tuple_access, indices[1:])
-            elif issubclass(itype, dict):
-                return self.codegen_list_tuple_access(f"{basename}['{i}']", indices[1:])
-            else:
-                raise AssertionError("non supported index type: ", itype)
-        else:
-            return basename
-
     def codegen(self, wrapper) -> None:  # type: ignore[no-untyped-def]
-        wrapper.codegen_multi_output(
-            self.get_name(),
-            self.codegen_list_tuple_access(self.inputs[0].get_name(), self.indices),
-        )
+        wrapper.codegen_multi_output(self)
         self.codegen_size_asserts(wrapper)
 
     def __init__(  # type: ignore[no-untyped-def]
