@@ -49,6 +49,7 @@ from torch._subclasses.fake_tensor import get_schema_info
 from torch.fx.experimental.symbolic_shapes import (
     _remove_effect_token_unbacked_bindings,
     compute_unbacked_bindings,
+    free_symbols,
     free_unbacked_symbols,
     rebind_unbacked,
     resolve_unbacked_bindings,
@@ -67,7 +68,7 @@ from .codegen.common import (
 )
 from .dependencies import (
     Dep,
-    extract_free_unbacked_symbols,
+    extract_free_symbols,
     extract_input_node_reduction_ranges,
     extract_read_writes,
     var_builder,
@@ -185,6 +186,9 @@ _NodeOrNodes: TypeAlias = Union[
 
 @dataclasses.dataclass(frozen=True)
 class GraphPartitionSignature:
+    # symbol inputs that are neccessary for codegen
+    symbol_inputs: OrderedSet[sympy.Symbol]
+
     # mapping from partition input name to IRNode or Expr. Need the name str since
     # we cannot get name from Expr.
     input_nodes: dict[str, Union[IRNode, sympy.Expr, TorchBindObject]]
@@ -685,6 +689,9 @@ class IRNode:
     def get_unbacked_symbol_uses(self) -> OrderedSet[Symbol]:
         raise NotImplementedError(type(self).__name__)
 
+    def get_free_symbol_uses(self) -> OrderedSet[sympy.Symbol]:
+        raise NotImplementedError(type(self).__name__)
+
     def get_reduction_type(self) -> Optional[str]:
         raise NotImplementedError(type(self).__name__)
 
@@ -776,6 +783,13 @@ class Operation:
         """
         return OrderedSet()
 
+    def get_free_symbol_uses(self) -> OrderedSet[sympy.Symbol]:
+        """
+        Equivalent to `get_unbacked_symbol_uses` but including all free symbols
+        instead of only free unbacked symbols.
+        """
+        return OrderedSet()
+
     def get_workspace_size(self) -> int:
         """
         Gets extra global memory size needed by this buffer.
@@ -795,6 +809,12 @@ class Loops(IRNode):
         return OrderedSet().union(
             *(free_unbacked_symbols(e) for e in self.ranges),
             self.inner_fn_free_unbacked_symbols(),
+        )
+
+    def get_free_symbol_uses(self) -> OrderedSet[sympy.Symbol]:
+        return OrderedSet().union(
+            *(free_symbols(e) for e in self.ranges),
+            self.inner_fn_free_symbols(),
         )
 
     def _to_str(self, names: Sequence[str]) -> str:
@@ -876,7 +896,11 @@ class Loops(IRNode):
 
     def inner_fn_free_unbacked_symbols(self) -> OrderedSet[Symbol]:
         index = self._index(self.ranges)
-        return extract_free_unbacked_symbols(self.inner_fn, index)
+        return extract_free_symbols(self.inner_fn, index, unbacked_only=True)
+
+    def inner_fn_free_symbols(self) -> OrderedSet[Symbol]:
+        index = self._index(self.ranges)
+        return extract_free_symbols(self.inner_fn, index, unbacked_only=False)
 
     def get_reads(self) -> OrderedSet[Dep]:
         with patch.object(FlexibleLayout, "allow_indexing", True):
@@ -1080,6 +1104,11 @@ class Reduction(Loops):
             *(free_unbacked_symbols(e) for e in self.reduction_ranges)
         )
 
+    def get_free_symbol_uses(self) -> OrderedSet[Symbol]:
+        return super().get_free_symbol_uses() | OrderedSet().union(
+            *(free_symbols(e) for e in self.reduction_ranges)
+        )
+
     def get_reduction_size(self) -> Sequence[sympy.Expr]:
         return self.reduction_ranges
 
@@ -1112,7 +1141,12 @@ class Reduction(Loops):
     def inner_fn_free_unbacked_symbols(self) -> OrderedSet[Symbol]:
         index = self._index(self.ranges)
         rindex = self._index(self.reduction_ranges, SymT.R0_INDEX)
-        return extract_free_unbacked_symbols(self.inner_fn, index, rindex)
+        return extract_free_symbols(self.inner_fn, index, rindex, unbacked_only=True)
+
+    def inner_fn_free_symbols(self) -> OrderedSet[Symbol]:
+        index = self._index(self.ranges)
+        rindex = self._index(self.reduction_ranges, SymT.R0_INDEX)
+        return extract_free_symbols(self.inner_fn, index, rindex, unbacked_only=False)
 
     def constant_to_device(self, device: torch.device) -> IRNode:
         """Move this to a given device. Requires that all reads are to constants."""
@@ -2144,6 +2178,13 @@ class Scan(Loops):
             | OrderedSet().union(*(free_unbacked_symbols(e) for e in self.size))
         )
 
+    def get_free_symbol_uses(self) -> OrderedSet[Symbol]:
+        return (
+            super().get_free_symbol_uses()
+            | OrderedSet().union(*(free_symbols(e) for e in self.scan_ranges))
+            | OrderedSet().union(*(free_symbols(e) for e in self.size))
+        )
+
     def __post_init__(self) -> None:
         assert len(self.ranges) + len(self.scan_ranges) == len(self.size)
         super().__post_init__()
@@ -2188,7 +2229,13 @@ class Scan(Loops):
         index = self._index(self.ranges)
         rindex = self._index(self.scan_ranges, SymT.R0_INDEX)
         idx = self.reindex(index, rindex)
-        return extract_free_unbacked_symbols(self.inner_fn, idx)
+        return extract_free_symbols(self.inner_fn, idx, unbacked_only=True)
+
+    def inner_fn_free_symbols(self) -> OrderedSet[Symbol]:
+        index = self._index(self.ranges)
+        rindex = self._index(self.scan_ranges, SymT.R0_INDEX)
+        idx = self.reindex(index, rindex)
+        return extract_free_symbols(self.inner_fn, idx, unbacked_only=False)
 
     @classmethod
     def create(  # type: ignore[override]
@@ -2346,6 +2393,13 @@ class Sort(Loops):
             | OrderedSet().union(*(free_unbacked_symbols(e) for e in self.size))
         )
 
+    def get_free_symbol_uses(self) -> OrderedSet[Symbol]:
+        return (
+            super().get_free_symbol_uses()
+            | OrderedSet().union(*(free_symbols(e) for e in self.sort_ranges))
+            | OrderedSet().union(*(free_symbols(e) for e in self.size))
+        )
+
     def __post_init__(self) -> None:
         assert len(self.ranges) + len(self.sort_ranges) == len(self.size)
         super().__post_init__()
@@ -2389,7 +2443,13 @@ class Sort(Loops):
         index = self._index(self.ranges)
         rindex = self._index(self.sort_ranges, SymT.R0_INDEX)
         idx = self.reindex(index, rindex)
-        return extract_free_unbacked_symbols(self.inner_fn, idx)
+        return extract_free_symbols(self.inner_fn, idx, unbacked_only=True)
+
+    def inner_fn_free_symbols(self) -> OrderedSet[Symbol]:
+        index = self._index(self.ranges)
+        rindex = self._index(self.sort_ranges, SymT.R0_INDEX)
+        idx = self.reindex(index, rindex)
+        return extract_free_symbols(self.inner_fn, idx, unbacked_only=False)
 
     @classmethod
     def create(  # type: ignore[override]
@@ -2567,6 +2627,9 @@ class BaseView(IRNode):
 
     def get_unbacked_symbol_uses(self) -> OrderedSet[Symbol]:
         return self.data.get_unbacked_symbol_uses()
+
+    def get_free_symbol_uses(self) -> OrderedSet[Symbol]:
+        return self.data.get_free_symbol_uses()
 
     def make_reindexer(self) -> Callable[[Sequence[Expr]], Sequence[Expr]]:
         raise NotImplementedError(f"make_reindexer NYI on {self}")
@@ -3110,6 +3173,13 @@ class ReinterpretView(BaseView):
             free_unbacked_symbols(self.layout.size)
             | free_unbacked_symbols(self.layout.stride)
             | free_unbacked_symbols(self.layout.offset)
+        )
+
+    def get_free_symbol_uses(self) -> OrderedSet[sympy.Symbol]:
+        return (
+            free_symbols(self.layout.size)
+            | free_symbols(self.layout.stride)
+            | free_symbols(self.layout.offset)
         )
 
     def codegen_reference(self, writer: Optional[IndentedBuffer] = None) -> str:
@@ -3982,6 +4052,9 @@ class Buffer(IRNode):
     def get_unbacked_symbol_uses(self) -> OrderedSet[sympy.Symbol]:
         return OrderedSet()
 
+    def get_free_symbol_uses(self) -> OrderedSet[sympy.Symbol]:
+        return OrderedSet()
+
     def get_unbacked_symbol_defs(self) -> OrderedSet[sympy.Symbol]:
         return OrderedSet()
 
@@ -4052,6 +4125,9 @@ class NoneAsConstantBuffer(IRNode):
     def get_unbacked_symbol_uses(self) -> OrderedSet[sympy.Symbol]:
         return OrderedSet()
 
+    def get_free_symbol_uses(self) -> OrderedSet[sympy.Symbol]:
+        return OrderedSet()
+
     def codegen_reference(self, writer: Optional[IndentedBuffer] = None) -> str:
         return V.graph.wrapper_code.none_str
 
@@ -4068,6 +4144,9 @@ class ShapeAsConstantBuffer(IRNode):
 
     def get_unbacked_symbol_uses(self) -> OrderedSet[sympy.Symbol]:
         return free_unbacked_symbols(self.expr)
+
+    def get_free_symbol_uses(self) -> OrderedSet[sympy.Symbol]:
+        return free_symbols(self.expr)
 
     def codegen_reference(self, writer: Optional[IndentedBuffer] = None) -> str:
         return V.graph.wrapper_code.codegen_sizevar(self.expr)
@@ -4137,6 +4216,14 @@ class ComputedBuffer(OperationBuffer):
             | free_unbacked_symbols(self.get_stride())
             | free_unbacked_symbols(self.get_offset())
             | self.data.get_unbacked_symbol_uses()
+        )
+
+    def get_free_symbol_uses(self) -> OrderedSet[sympy.Symbol]:
+        return (
+            free_symbols(self.get_size())
+            | free_symbols(self.get_stride())
+            | free_symbols(self.get_offset())
+            | self.data.get_free_symbol_uses()
         )
 
     def make_loader(self) -> Callable[[Sequence[Expr]], OpsValue]:
@@ -5708,6 +5795,14 @@ class ExternKernel(InputsKernel):
             r |= maybe_free_unbacked_symbols(arg)
         return r
 
+    def get_free_symbol_uses(self) -> OrderedSet[sympy.Symbol]:
+        r = OrderedSet[sympy.Symbol]()
+        for arg in self.constant_args:
+            r |= maybe_free_symbols(arg)
+        for arg in self.kwargs.values():
+            r |= maybe_free_symbols(arg)
+        return r
+
     def __str__(self) -> str:
         kernel_name = getattr(self, "python_kernel_name", None)
         lines = [
@@ -6050,6 +6145,9 @@ class UserDefinedTritonKernel(ExternKernel):
         # add unbacked symbols used in the grid to the ones used
         # in the kwargs (the latter is generated by ExternKernel)
         return super().get_unbacked_symbol_uses() | free_unbacked_symbols(self.grid)
+
+    def get_free_symbol_uses(self) -> OrderedSet[sympy.Symbol]:
+        return super().get_free_symbol_uses() | free_symbols(self.grid)
 
     def get_unbacked_symbol_defs(self) -> OrderedSet[sympy.Symbol]:
         return OrderedSet()
@@ -6481,6 +6579,9 @@ class AssertScalar(ExternKernel):
 
     def get_unbacked_symbol_uses(self):  # type: ignore[no-untyped-def]
         return free_unbacked_symbols(self.scalar)
+
+    def get_free_symbol_uses(self):  # type: ignore[no-untyped-def]
+        return free_symbols(self.scalar)
 
     def codegen(self, wrapper) -> None:  # type: ignore[no-untyped-def]
         if not config.scalar_asserts:
@@ -7018,6 +7119,9 @@ class MultiOutput(ExternKernel):
     def get_unbacked_symbol_uses(self) -> OrderedSet[sympy.Symbol]:
         return self.inputs[0].get_unbacked_symbol_uses()
 
+    def get_free_symbol_uses(self) -> OrderedSet[sympy.Symbol]:
+        return self.inputs[0].get_free_symbol_uses()
+
     def should_allocate(self) -> bool:
         if len(self.inputs) == 1 and (
             isinstance(self.inputs[0], CppTemplateBuffer)  # Grouped GEMM
@@ -7134,6 +7238,9 @@ class MutableBox(IRNode):
 
     def get_unbacked_symbol_uses(self) -> OrderedSet[sympy.Symbol]:
         return self.data.get_unbacked_symbol_uses()
+
+    def get_free_symbol_uses(self) -> OrderedSet[sympy.Symbol]:
+        return self.data.get_free_symbol_uses()
 
     def get_read_names(self) -> OrderedSet[str]:
         return self.data.get_read_names()
@@ -8044,5 +8151,21 @@ def maybe_free_unbacked_symbols(s: object) -> OrderedSet[Symbol]:
     elif isinstance(s, torch.Tensor):
         # This branch is impossible in constant-args position
         return free_unbacked_symbols(s)
+    else:
+        return OrderedSet()
+
+
+def maybe_free_symbols(s: object) -> OrderedSet[Symbol]:
+    if isinstance(s, (SymTypes, Expr)):
+        # This branch should be impossible in return position
+        return free_symbols(s)
+    elif isinstance(s, (tuple, list)):
+        r = OrderedSet[sympy.Symbol]()
+        for t in s:
+            r |= maybe_free_symbols(t)
+        return r
+    elif isinstance(s, torch.Tensor):
+        # This branch is impossible in constant-args position
+        return free_symbols(s)
     else:
         return OrderedSet()
