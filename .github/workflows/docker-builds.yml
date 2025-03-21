@@ -72,8 +72,7 @@ jobs:
           pytorch-linux-focal-linter,
           pytorch-linux-jammy-cuda11.8-cudnn9-py3.9-linter,
           pytorch-linux-jammy-py3-clang12-executorch,
-          pytorch-linux-jammy-py3.12-triton-cpu,
-          pytorch-linux-noble-riscv64-py3.12-gcc14
+          pytorch-linux-jammy-py3.12-triton-cpu
         ]
         include:
           - docker-image-name: pytorch-linux-jammy-aarch64-py3.10-gcc11
@@ -81,6 +80,8 @@ jobs:
           - docker-image-name: pytorch-linux-jammy-aarch64-py3.10-gcc11-inductor-benchmarks
             runner: linux.arm64.m7g.4xlarge
             timeout-minutes: 600
+          - docker-image-name: pytorch-linux-noble-riscv64-py3.12-gcc14
+            runner: ubuntu-latest
     # Docker uploads fail from LF runners, see https://github.com/pytorch/pytorch/pull/137358
     # runs-on: "${{ needs.get-label-type.outputs.label-type }}${{ matrix.runner }}"
     runs-on: "${{ matrix.runner }}"
