@@ -63,6 +63,11 @@ const std::string k_separator = "\\";
 const std::string k_separator = "/";
 #endif
 
+bool startsWith(const std::string& str, const std::string& prefix) {
+  return str.length() >= prefix.length() &&
+      str.substr(0, prefix.length()) == prefix;
+}
+
 } // namespace
 
 namespace torch::inductor {
@@ -372,6 +377,7 @@ AOTIModelPackageLoader::AOTIModelPackageLoader(
   std::string found_filenames; // Saving for bookkeeping
   std::string model_directory =
       "data" + k_separator + "aotinductor" + k_separator + model_name;
+  std::string const_directory = "data" + k_separator + "constants";
 
   for (uint32_t i = 0; i < zip_archive.m_total_files; i++) {
     uint32_t filename_len =
@@ -389,11 +395,24 @@ AOTIModelPackageLoader::AOTIModelPackageLoader(
     found_filenames += " ";
 
     // Only compile files in the specified model directory
-    if (filename_str.length() >= model_directory.length() &&
-        filename_str.substr(0, model_directory.length()) == model_directory) {
+    if (startsWith(filename_str, model_directory) ||
+        startsWith(filename_str, const_directory)) {
       std::string output_path_str = temp_dir_;
-      output_path_str += k_separator;
-      output_path_str += filename_str;
+
+      if (startsWith(filename_str, model_directory)) {
+        output_path_str += k_separator;
+        output_path_str += filename_str;
+      } else { // startsWith(filename_str, const_directory)
+        // Extract constants to the same directory as the rest of the files
+        // to be consistent with internal implementation
+        std::filesystem::path path_fs(filename_str);
+        std::string filename = path_fs.filename().string();
+        output_path_str +=
+            k_separator + model_directory + k_separator + filename;
+      }
+
+      LOG(INFO) << "Extract file: " << filename_str << " to "
+                << output_path_str;
 
       // Create the parent directory if it doesn't exist
       size_t parent_path_idx = output_path_str.find_last_of("/\\");
