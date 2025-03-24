@@ -1,4 +1,7 @@
-from typing import Callable
+import ast
+import inspect
+import sys
+from typing import Callable, Optional
 
 import cuda.parallel.experimental.algorithms as algorithms
 import numpy as np
@@ -7,6 +10,7 @@ import torch.utils._pytree as pytree
 
 
 function_registry = {}
+
 
 @torch.library.custom_op("cccl::inclusive_scan", mutates_args=())
 def inclusive_scan(combine_fn_name: str, xs: torch.Tensor, dim: int) -> torch.Tensor:
@@ -33,6 +37,42 @@ def inclusive_scan(combine_fn_name: str, xs: torch.Tensor, dim: int) -> torch.Te
 @inclusive_scan.register_fake
 def _(combine_fn_name, xs, dim):
     return torch.empty_like(xs)
+
+
+def wrap_if_lambda(func: Callable) -> Callable:
+    if not callable(func):
+        raise TypeError("Input must be callable")
+
+    sig = inspect.signature(func)
+    args: str = ", ".join(sig.parameters.keys())
+    name = f"wrapped_{id(func)}"
+
+    # TODO: we still need to get the body of the lambda. Could this be improved?
+    # inspect.getsource(func) doesn't work if there is other code on the same
+    # line
+    positions = list(func.__code__.co_positions())[-1]
+    body_line = positions[0]
+    body_start = positions[2]
+    body_end = positions[3]
+    file = inspect.getsourcefile(func)
+
+    with open(file, "r") as f:
+        line = f.readlines()[body_line - 1]
+        body = line[body_start:body_end]
+
+    # This is how we handle torch.abs()
+    body = body.replace("torch.", "")
+
+    function_str = f"""
+def {name}({args}):
+    return {body}
+"""
+
+    # This will store the function definition in this dictionary
+    namespace = {}
+    exec(function_str, namespace)
+
+    return namespace[name]
 
 
 def associative_scan(
@@ -86,6 +126,13 @@ def associative_scan(
         raise ValueError(
             "Combine_mode must either 'pointwise' or 'generic', but got {combine_mode}"
         )
+
+    if combine_mode == "generic":
+        raise ValueError("cuda_parallel.associative_scan does not currently support \"generic\"")
+
+    # TODO: cuda.parallel doesn't support lambdas
+    if combine_fn.__name__ == "<lambda>":
+        combine_fn = wrap_if_lambda(combine_fn)
 
     # TODO: instead of using the name, is there a better unique identifier? What
     # if there is a naming clash?

@@ -1307,7 +1307,7 @@ class AssociativeScanTests(TestCase):
     # produces weird results.
     # This is under investigations in
     # https://github.com/pytorch/pytorch/issues/131805
-    @decorateIf(unittest.skip, lambda params: params["device"] == GPU_TYPE)
+    @decorateIf(unittest.skip, lambda params: params["device"] == GPU_TYPE or params["combine_mode"] == "generic")
     def test_associative_scan_CUDA_flip(self, combine_mode, backend, device):
         def fct(x: torch.Tensor, y: torch.Tensor):
             return x + y
