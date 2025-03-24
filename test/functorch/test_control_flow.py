@@ -10,8 +10,9 @@ from functorch.experimental.control_flow import cond, UnsupportedAliasMutationEx
 from torch._dynamo.testing import normalize_gm
 from torch._higher_order_ops.associative_scan import (
     _fake_associative_scan,
-    associative_scan,
+    # associative_scan,
 )
+from torch._higher_order_ops.cuda_parallel_associative_scan import associative_scan
 from torch._higher_order_ops.scan import _fake_scan, scan
 from torch._higher_order_ops.while_loop import while_loop
 from torch._subclasses.functional_tensor import (

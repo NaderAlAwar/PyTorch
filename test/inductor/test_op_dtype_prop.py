@@ -280,7 +280,8 @@ class TestCase(InductorTestCase):
     @config.patch("test_configs.runtime_triton_dtype_assert", True)
     @config.patch("test_configs.static_cpp_dtype_assert", True)
     def test_assoc_scan(self):
-        from torch._higher_order_ops.associative_scan import associative_scan
+        # from torch._higher_order_ops.associative_scan import associative_scan
+        from torch._higher_order_ops.cuda_parallel_associative_scan import associative_scan
 
         x = torch.randn(10, device="cuda")
         # dtype check correctly

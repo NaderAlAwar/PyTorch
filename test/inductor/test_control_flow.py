@@ -5,7 +5,8 @@ import unittest
 
 import torch
 import torch._dynamo.testing
-from torch._higher_order_ops.associative_scan import associative_scan
+# from torch._higher_order_ops.associative_scan import associative_scan
+from torch._higher_order_ops.cuda_parallel_associative_scan import associative_scan
 from torch._higher_order_ops.scan import _fake_scan, scan
 from torch._inductor.test_case import TestCase
 from torch.testing._internal.common_utils import (

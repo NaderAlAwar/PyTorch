@@ -29,7 +29,8 @@ from torch._export.utils import (
     is_param,
     register_dataclass_as_pytree_node,
 )
-from torch._higher_order_ops.associative_scan import associative_scan
+# from torch._higher_order_ops.associative_scan import associative_scan
+from torch._higher_order_ops.cuda_parallel_associative_scan import associative_scan
 from torch._higher_order_ops.hints_wrap import hints_wrapper
 from torch._inductor.compile_fx import split_const_gm
 from torch._subclasses import FakeTensorMode
