@@ -6,6 +6,35 @@ import torch
 import torch.utils._pytree as pytree
 
 
+function_registry = {}
+
+@torch.library.custom_op("cccl::inclusive_scan", mutates_args=())
+def inclusive_scan(combine_fn_name: str, xs: torch.Tensor, dim: int) -> torch.Tensor:
+    h_init = torch.tensor([0], dtype=xs.dtype).numpy()
+    d_output = torch.empty_like(xs)
+
+    combine_fn = function_registry[combine_fn_name]
+
+    # Instantiate scan for the given operator and initial value
+    scanner = algorithms.inclusive_scan(d_output, d_output, combine_fn, h_init)
+
+    # Determine temporary device storage requirements
+    temp_storage_size = scanner(None, xs, d_output, xs.size(dim), h_init)
+
+    # Allocate temporary storage
+    d_temp_storage = torch.empty((temp_storage_size,), dtype=torch.uint8).cuda()
+
+    # Run reduction
+    scanner(d_temp_storage, xs, d_output, xs.size(dim), h_init)
+
+    return d_output
+
+
+@inclusive_scan.register_fake
+def _(combine_fn_name, xs, dim):
+    return torch.empty_like(xs)
+
+
 def associative_scan(
     combine_fn: Callable[[pytree.PyTree, pytree.PyTree], pytree.PyTree],
     xs: pytree.PyTree,
@@ -58,19 +87,9 @@ def associative_scan(
             "Combine_mode must either 'pointwise' or 'generic', but got {combine_mode}"
         )
 
-    h_init = torch.tensor([0], dtype=xs.dtype).numpy()
-    d_output = torch.empty_like(xs)
+    # TODO: instead of using the name, is there a better unique identifier? What
+    # if there is a naming clash?
+    combine_fn_name = combine_fn.__name__
+    function_registry[combine_fn_name] = combine_fn
 
-    # Instantiate scan for the given operator and initial value
-    scanner = algorithms.inclusive_scan(d_output, d_output, combine_fn, h_init)
-
-    # Determine temporary device storage requirements
-    temp_storage_size = scanner(None, xs, d_output, xs.size(dim), h_init)
-
-    # Allocate temporary storage
-    d_temp_storage = torch.empty((temp_storage_size,), dtype=torch.uint8).cuda()
-
-    # Run reduction
-    scanner(d_temp_storage, xs, d_output, xs.size(dim), h_init)
-
-    return d_output
+    return inclusive_scan(combine_fn_name, xs, dim)
