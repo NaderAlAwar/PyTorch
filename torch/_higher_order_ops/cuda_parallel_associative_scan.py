@@ -14,7 +14,8 @@ function_registry = {}
 
 @torch.library.custom_op("cccl::inclusive_scan", mutates_args=())
 def inclusive_scan(combine_fn_name: str, xs: torch.Tensor, dim: int) -> torch.Tensor:
-    h_init = torch.tensor([0], dtype=xs.dtype).numpy()
+    # TODO: flatten is potentially expensive
+    h_init = torch.tensor([torch.flatten(xs)[0]], dtype=xs.dtype).numpy()
     d_output = torch.empty_like(xs)
 
     combine_fn = function_registry[combine_fn_name]
@@ -22,14 +23,20 @@ def inclusive_scan(combine_fn_name: str, xs: torch.Tensor, dim: int) -> torch.Te
     # Instantiate scan for the given operator and initial value
     scanner = algorithms.inclusive_scan(d_output, d_output, combine_fn, h_init)
 
+    input_array = xs[1:]
+    output_array = d_output[1:]
+    size = xs.size(dim) - 1
+
     # Determine temporary device storage requirements
-    temp_storage_size = scanner(None, xs, d_output, xs.size(dim), h_init)
+    temp_storage_size = scanner(None, input_array, output_array, size, h_init)
 
     # Allocate temporary storage
     d_temp_storage = torch.empty((temp_storage_size,), dtype=torch.uint8).cuda()
 
     # Run reduction
-    scanner(d_temp_storage, xs, d_output, xs.size(dim), h_init)
+    scanner(d_temp_storage, input_array, output_array, size, h_init)
+
+    d_output.data[0] = h_init.item()
 
     return d_output
 
