@@ -40,8 +40,8 @@ def create_input_slices(xs: torch.Tensor, dim: int) -> List[List[slice | int]]:
 
 @torch.library.custom_op("cccl::inclusive_scan", mutates_args=())
 def inclusive_scan(combine_fn_name: str, xs: torch.Tensor, dim: int) -> torch.Tensor:
-    slice_objects = create_input_slices(xs, dim)
     d_output = torch.empty_like(xs)
+    slice_objects = create_input_slices(xs, dim)
 
     for slice_object in slice_objects:
         current_output = d_output[*slice_object]
@@ -177,6 +177,10 @@ def associative_scan(
 
     if combine_mode == "generic":
         raise ValueError("cuda_parallel.associative_scan does not currently support \"generic\"")
+
+    # Makes it easier so we don't deal with negative indices later
+    if dim < 0:
+        dim = xs.dim() + dim
 
     # TODO: cuda.parallel doesn't support lambdas
     if combine_fn.__name__ == "<lambda>":
