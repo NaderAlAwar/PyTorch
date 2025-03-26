@@ -57,16 +57,23 @@ def inclusive_scan(combine_fn_name: str, xs: torch.Tensor, dim: int) -> torch.Te
 
         input_array = current_input[1:]
         output_array = current_output[1:]
+
+        # TODO: I clone this in order to reset the strides because I cannot pass
+        # stride info to our scan currently
+        input_array_clone = input_array.clone()
+        output_array_clone = output_array.clone()
         size = xs.size(dim) - 1
 
         # Determine temporary device storage requirements
-        temp_storage_size = scanner(None, input_array, output_array, size, h_init)
+        temp_storage_size = scanner(None, input_array_clone, output_array_clone, size, h_init)
 
         # Allocate temporary storage
         d_temp_storage = torch.empty((temp_storage_size,), dtype=torch.uint8).cuda()
 
         # Run reduction
-        scanner(d_temp_storage, input_array, output_array, size, h_init)
+        scanner(d_temp_storage, input_array_clone, output_array_clone, size, h_init)
+
+        output_array.copy_(output_array_clone)
 
         current_output.data[0] = h_init.item()
 
