@@ -1,10 +1,8 @@
-import ast
 import inspect
-import sys
-from typing import Callable, Optional
+import itertools
+from typing import Callable, List
 
 import cuda.parallel.experimental.algorithms as algorithms
-import numpy as np
 import torch
 import torch.utils._pytree as pytree
 
@@ -12,31 +10,65 @@ import torch.utils._pytree as pytree
 function_registry = {}
 
 
+def create_input_slices(xs: torch.Tensor, dim: int) -> List[List[slice | int]]:
+    """Given a multidimensional input tensor and a dimension to run the scan
+    over, we want to slice it so that we can call parallel scan on each sliced
+    input array individually. This function generates the slices, which are
+    lists of slice objects and ints, that can be used to index the input and
+    output array."""
+
+    assert dim < xs.dim()
+    dim_shape = xs.shape[dim]
+
+    # e.g., for a tensor of shape [3, 2, 4], and for dim == 0, this will be
+    # [range(2), range(4)]
+    range_objects = [torch.arange(i) for idx, i in enumerate(xs.shape) if idx != dim]
+
+    # We now create the slice objects to slice the array by getting every
+    # combination of elements. For the dimension we are scanning over, we insert
+    # a slice that takes that entire dimension. Following the example above, we
+    # get: [[slice(0, 3), 0, 0], [slice(0, 3), 0, 1], ..., [slice(0, 3), 1, 3]]
+    # which is of size 2x4
+    slice_objects = []
+    for s in itertools.product(*range_objects):
+        current_slice = list(s)
+        current_slice.insert(dim, slice(0, dim_shape))
+        slice_objects.append(current_slice)
+
+    return slice_objects
+
+
 @torch.library.custom_op("cccl::inclusive_scan", mutates_args=())
 def inclusive_scan(combine_fn_name: str, xs: torch.Tensor, dim: int) -> torch.Tensor:
-    # TODO: flatten is potentially expensive
-    h_init = torch.tensor([torch.flatten(xs)[0]], dtype=xs.dtype).numpy()
+    slice_objects = create_input_slices(xs, dim)
     d_output = torch.empty_like(xs)
 
-    combine_fn = function_registry[combine_fn_name]
+    for slice_object in slice_objects:
+        current_output = d_output[*slice_object]
+        current_input = xs[*slice_object]
 
-    # Instantiate scan for the given operator and initial value
-    scanner = algorithms.inclusive_scan(d_output, d_output, combine_fn, h_init)
+        # TODO: flatten is potentially expensive
+        h_init = torch.tensor([torch.flatten(current_input)[0]], dtype=xs.dtype).numpy()
 
-    input_array = xs[1:]
-    output_array = d_output[1:]
-    size = xs.size(dim) - 1
+        combine_fn = function_registry[combine_fn_name]
 
-    # Determine temporary device storage requirements
-    temp_storage_size = scanner(None, input_array, output_array, size, h_init)
+        # Instantiate scan for the given operator and initial value
+        scanner = algorithms.inclusive_scan(d_output, d_output, combine_fn, h_init)
 
-    # Allocate temporary storage
-    d_temp_storage = torch.empty((temp_storage_size,), dtype=torch.uint8).cuda()
+        input_array = current_input[1:]
+        output_array = current_output[1:]
+        size = xs.size(dim) - 1
 
-    # Run reduction
-    scanner(d_temp_storage, input_array, output_array, size, h_init)
+        # Determine temporary device storage requirements
+        temp_storage_size = scanner(None, input_array, output_array, size, h_init)
 
-    d_output.data[0] = h_init.item()
+        # Allocate temporary storage
+        d_temp_storage = torch.empty((temp_storage_size,), dtype=torch.uint8).cuda()
+
+        # Run reduction
+        scanner(d_temp_storage, input_array, output_array, size, h_init)
+
+        current_output.data[0] = h_init.item()
 
     return d_output
 
@@ -47,6 +79,8 @@ def _(combine_fn_name, xs, dim):
 
 
 def wrap_if_lambda(func: Callable) -> Callable:
+    """Transform a lambda operator into a normal function"""
+
     if not callable(func):
         raise TypeError("Input must be callable")
 
