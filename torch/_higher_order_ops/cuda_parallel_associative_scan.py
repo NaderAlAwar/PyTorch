@@ -4,6 +4,7 @@ from typing import Callable, List
 
 import cuda.parallel.experimental.algorithms as algorithms
 import cuda.parallel.experimental.iterators as iterators
+import cupy as cp
 import torch
 import torch.utils._pytree as pytree
 
@@ -58,9 +59,13 @@ def inclusive_scan(combine_fn_name: str, xs: torch.Tensor, dim: int, reverse: bo
 
         # TODO: I clone this in order to reset the strides because I cannot pass
         # stride info to our scan currently
-        input_array_clone = input_array.clone()
-        output_array_clone = output_array.clone()
+        input_array_clone = input_array.detach().clone()
+        output_array_clone = cp.empty(input_array.size())
         size = xs.size(dim) - 1
+
+        if reverse:
+            # We use cp.asarray() because cuda.parallel does not recognize pytorch types
+            input_array_clone = iterators.ReverseIterator(cp.asarray(input_array_clone))
 
         # Instantiate scan for the given operator and initial value
         scanner = algorithms.inclusive_scan(input_array_clone, output_array_clone, combine_fn, h_init)
@@ -69,12 +74,12 @@ def inclusive_scan(combine_fn_name: str, xs: torch.Tensor, dim: int, reverse: bo
         temp_storage_size = scanner(None, input_array_clone, output_array_clone, size, h_init)
 
         # Allocate temporary storage
-        d_temp_storage = torch.empty((temp_storage_size,), dtype=torch.uint8).cuda()
+        d_temp_storage = cp.empty((temp_storage_size,), dtype=cp.uint8)
 
         # Run reduction
         scanner(d_temp_storage, input_array_clone, output_array_clone, size, h_init)
 
-        output_array.copy_(output_array_clone)
+        output_array.copy_(torch.as_tensor(output_array_clone))
 
         current_output.data[0] = h_init.item()
 
