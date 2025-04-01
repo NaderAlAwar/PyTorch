@@ -3,6 +3,7 @@ import itertools
 from typing import Callable, List
 
 import cuda.parallel.experimental.algorithms as algorithms
+import cuda.parallel.experimental.iterators as iterators
 import torch
 import torch.utils._pytree as pytree
 
@@ -39,7 +40,7 @@ def create_input_slices(xs: torch.Tensor, dim: int) -> List[List[slice | int]]:
 
 
 @torch.library.custom_op("cccl::inclusive_scan", mutates_args=())
-def inclusive_scan(combine_fn_name: str, xs: torch.Tensor, dim: int) -> torch.Tensor:
+def inclusive_scan(combine_fn_name: str, xs: torch.Tensor, dim: int, reverse: bool) -> torch.Tensor:
     d_output = torch.empty_like(xs)
     slice_objects = create_input_slices(xs, dim)
 
@@ -52,9 +53,6 @@ def inclusive_scan(combine_fn_name: str, xs: torch.Tensor, dim: int) -> torch.Te
 
         combine_fn = function_registry[combine_fn_name]
 
-        # Instantiate scan for the given operator and initial value
-        scanner = algorithms.inclusive_scan(d_output, d_output, combine_fn, h_init)
-
         input_array = current_input[1:]
         output_array = current_output[1:]
 
@@ -63,6 +61,9 @@ def inclusive_scan(combine_fn_name: str, xs: torch.Tensor, dim: int) -> torch.Te
         input_array_clone = input_array.clone()
         output_array_clone = output_array.clone()
         size = xs.size(dim) - 1
+
+        # Instantiate scan for the given operator and initial value
+        scanner = algorithms.inclusive_scan(input_array_clone, output_array_clone, combine_fn, h_init)
 
         # Determine temporary device storage requirements
         temp_storage_size = scanner(None, input_array_clone, output_array_clone, size, h_init)
@@ -81,7 +82,7 @@ def inclusive_scan(combine_fn_name: str, xs: torch.Tensor, dim: int) -> torch.Te
 
 
 @inclusive_scan.register_fake
-def _(combine_fn_name, xs, dim):
+def _(combine_fn_name, xs, dim, reverse):
     return torch.empty_like(xs)
 
 
@@ -191,4 +192,4 @@ def associative_scan(
     combine_fn_name = combine_fn.__name__
     function_registry[combine_fn_name] = combine_fn
 
-    return inclusive_scan(combine_fn_name, xs, dim)
+    return inclusive_scan(combine_fn_name, xs, dim, reverse)
