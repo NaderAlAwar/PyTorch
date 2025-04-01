@@ -50,12 +50,19 @@ def inclusive_scan(combine_fn_name: str, xs: torch.Tensor, dim: int, reverse: bo
         current_input = xs[*slice_object]
 
         # TODO: flatten is potentially expensive
-        h_init = torch.tensor([torch.flatten(current_input)[0]], dtype=xs.dtype).numpy()
+        if reverse:
+            h_init = torch.tensor([torch.flatten(current_input)[-1]], dtype=xs.dtype).numpy()
+        else:
+            h_init = torch.tensor([torch.flatten(current_input)[0]], dtype=xs.dtype).numpy()
 
         combine_fn = function_registry[combine_fn_name]
 
-        input_array = current_input[1:]
-        output_array = current_output[1:]
+        if reverse:
+            input_array = current_input[:-1]
+            output_array = current_output[:-1]
+        else:
+            input_array = current_input[1:]
+            output_array = current_output[1:]
 
         # TODO: I clone this in order to reset the strides because I cannot pass
         # stride info to our scan currently
@@ -79,9 +86,17 @@ def inclusive_scan(combine_fn_name: str, xs: torch.Tensor, dim: int, reverse: bo
         # Run reduction
         scanner(d_temp_storage, input_array_clone, output_array_clone, size, h_init)
 
-        output_array.copy_(torch.as_tensor(output_array_clone))
+        output_array_clone = torch.as_tensor(output_array_clone)
+        if reverse:
+            # TODO: this is only temporary until we support reverse output iterators
+            output_array_clone = torch.flip(output_array_clone, (0,))
 
-        current_output.data[0] = h_init.item()
+        output_array.copy_(output_array_clone)
+
+        if reverse:
+            current_output.data[-1] = h_init.item()
+        else:
+            current_output.data[0] = h_init.item()
 
     return d_output
 
